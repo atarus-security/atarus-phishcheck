@@ -2,14 +2,13 @@ import os
 import sys
 import click
 from rich.console import Console
-from rich.table import Table
-from atarus_phishcheck.analyzers import parser, auth, indicators, content, scoring
+from atarus_phishcheck.analyzers import parser, auth, indicators, content, scoring, brands, reputation
 from atarus_phishcheck.models import AnalysisResult
 from atarus_phishcheck.reports import html_report, json_export
 
 console = Console()
 
-VERSION = "0.1.0"
+VERSION = "0.2.0"
 
 BANNER = f"""
    ╔═╗╔╦╗╔═╗╦═╗╦ ╦╔═╗  ╔═╗╦ ╦╦╔═╗╦ ╦╔═╗╦ ╦╔═╗╔═╗╦╔═
@@ -23,22 +22,41 @@ BANNER = f"""
 @click.option("-i", "--input", "input_file", type=click.Path(exists=True), required=True, help="Path to .eml file or raw email text")
 @click.option("-o", "--output", default="./output", help="Output directory")
 @click.option("--format", "out_format", default="all", type=click.Choice(["html", "json", "all", "terminal"]), help="Output format")
+@click.option("--offline", is_flag=True, help="Skip external reputation lookups (URLhaus, MalwareBazaar)")
 @click.option("-v", "--verbose", is_flag=True, help="Verbose output")
 @click.version_option(version=VERSION, prog_name="atarus-phishcheck")
-def main(input_file, output, out_format, verbose, ):
+def main(input_file, output, out_format, offline, verbose):
     """atarus-phishcheck: defensive email security analyzer"""
 
     console.print(BANNER, style="bold red")
 
     console.print(f"[bold white]Analyzing:[/] {input_file}")
+    if offline:
+        console.print(f"[bold yellow]Offline mode:[/] skipping URLhaus and MalwareBazaar lookups")
 
     with open(input_file, "r", errors="replace") as f:
         raw = f.read()
 
     headers, body = parser.parse_email(raw)
+
     auth_result, auth_findings = auth.check_authentication(headers)
     ioc_list, ioc_findings = indicators.extract_indicators(headers, body)
     content_findings = content.analyze_content(headers, body)
+    brand_findings = brands.check_brand_impersonation(headers, body)
+
+    hash_indicators, hash_findings = reputation.hash_attachments(body, raw)
+    ioc_list.extend(hash_indicators)
+
+    rep_findings = []
+    if not offline:
+        with console.status("[bold cyan]Checking URLs against URLhaus...") as status:
+            url_findings = reputation.check_urls(ioc_list, offline=offline)
+            rep_findings.extend(url_findings)
+
+        if hash_indicators:
+            with console.status("[bold cyan]Checking attachment hashes against MalwareBazaar..."):
+                mb_findings = reputation.check_hashes_malwarebazaar(ioc_list, offline=offline)
+                rep_findings.extend(mb_findings)
 
     result = AnalysisResult(
         source_file=input_file,
@@ -47,7 +65,7 @@ def main(input_file, output, out_format, verbose, ):
         auth=auth_result,
     )
     result.indicators = ioc_list
-    for f in auth_findings + ioc_findings + content_findings:
+    for f in auth_findings + ioc_findings + content_findings + brand_findings + rep_findings:
         result.add_finding(f)
 
     scoring.score_result(result)

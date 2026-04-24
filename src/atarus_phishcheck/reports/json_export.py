@@ -7,7 +7,7 @@ from atarus_phishcheck.models import AnalysisResult
 def generate(result: AnalysisResult, output_path: str) -> str:
     data = {
         "tool": "atarus-phishcheck",
-        "version": "0.1.0",
+        "version": "0.2.0",
         "analyzed_at": result.analyzed_at,
         "source_file": result.source_file,
         "verdict": result.verdict,
