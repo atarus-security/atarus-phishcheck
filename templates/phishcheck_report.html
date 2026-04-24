@@ -103,6 +103,15 @@
     </div>
   </div>
 
+
+  {% if preview_available %}
+  <div class="section">
+    <div class="section-title">Email Preview (Sandboxed)</div>
+    <p style="color:#888;font-size:12px;margin-bottom:12px;line-height:1.6">The email body is rendered below in an isolated iframe with scripts removed, external resources blocked, and all links disabled. Use this preview to visually assess what the recipient would have seen without any risk of malicious content executing.</p>
+    <iframe sandbox="allow-same-origin" srcdoc="{{ preview_html }}" style="width:100%;height:480px;border:1px solid #1a1a1a;border-radius:6px;background:#fff;"></iframe>
+  </div>
+  {% endif %}
+
   <div class="section">
     <div class="section-title">Email Overview</div>
     <table class="kv-table">
