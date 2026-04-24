@@ -1,0 +1,15 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+venv/
+.venv/
+.vscode/
+*.swp
+*~
+output/
+.env
+build*.sh
+*.eml
+!examples/sample-phish.eml

@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>atarus-phishcheck | {{ result.headers.from_domain or 'report' }}</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #060606; color: #e0e0e0; font-family: 'Segoe UI', system-ui, sans-serif; line-height: 1.6; padding: 40px 20px; }
+  .container { max-width: 960px; margin: 0 auto; }
+  .header { border-bottom: 2px solid #D4263E; padding-bottom: 20px; margin-bottom: 28px; }
+  .header h1 { font-size: 26px; font-weight: 600; letter-spacing: 1px; }
+  .header h1 span { color: #D4263E; }
+  .header .subtitle { font-size: 13px; color: #888; margin-top: 4px; }
+
+  .verdict-card { border-radius: 8px; padding: 24px 28px; margin-bottom: 28px; border: 1px solid #1a1a1a; }
+  .verdict-card.clean { background: #0a1f0e; border-color: #16a34a; }
+  .verdict-card.questionable { background: #1f1a0a; border-color: #d97706; }
+  .verdict-card.suspicious { background: #1f150a; border-color: #ea580c; }
+  .verdict-card.likely_phishing { background: #1f0a0a; border-color: #D4263E; }
+  .verdict-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+  .verdict-label { font-size: 11px; letter-spacing: 1.5px; text-transform: uppercase; color: #888; }
+  .verdict-value { font-size: 22px; font-weight: 700; margin-top: 4px; }
+  .verdict-value.clean { color: #22c55e; }
+  .verdict-value.questionable { color: #eab308; }
+  .verdict-value.suspicious { color: #f97316; }
+  .verdict-value.likely_phishing { color: #ef4444; }
+  .score-circle { font-size: 36px; font-weight: 700; color: #fff; }
+  .verdict-desc { font-size: 13px; color: #aaa; line-height: 1.7; margin-top: 8px; }
+
+  .section { background: #111; border: 1px solid #1a1a1a; border-radius: 8px; padding: 22px 26px; margin-bottom: 18px; }
+  .section-title { font-size: 14px; color: #D4263E; text-transform: uppercase; letter-spacing: 1.5px; font-weight: 600; margin-bottom: 14px; }
+  .kv-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .kv-table td { padding: 7px 0; border-bottom: 1px solid #1a1a1a; vertical-align: top; }
+  .kv-table td:first-child { color: #888; width: 180px; font-size: 12px; }
+  .kv-table td:last-child { color: #e0e0e0; word-break: break-all; font-family: 'Courier New', monospace; font-size: 12px; }
+  .kv-table tr:last-child td { border-bottom: none; }
+
+  .auth-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+  .auth-cell { background: #0a0a0a; border: 1px solid #1a1a1a; border-radius: 6px; padding: 14px 16px; }
+  .auth-name { font-size: 11px; text-transform: uppercase; letter-spacing: 1.2px; color: #888; margin-bottom: 6px; }
+  .auth-result { font-size: 16px; font-weight: 600; }
+  .auth-result.pass { color: #22c55e; }
+  .auth-result.fail { color: #ef4444; }
+  .auth-result.softfail, .auth-result.neutral, .auth-result.none { color: #eab308; }
+
+  .finding-card { background: #0a0a0a; border: 1px solid #1a1a1a; border-left: 3px solid #888; border-radius: 6px; padding: 14px 18px; margin-bottom: 10px; }
+  .finding-card.sev-high { border-left-color: #ef4444; }
+  .finding-card.sev-medium { border-left-color: #f97316; }
+  .finding-card.sev-low { border-left-color: #eab308; }
+  .finding-card.sev-info { border-left-color: #3b82f6; }
+  .finding-header { display: flex; gap: 10px; align-items: center; margin-bottom: 6px; flex-wrap: wrap; }
+  .sev-pill { padding: 2px 10px; border-radius: 10px; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; }
+  .sev-pill.high { background: #450a0a; color: #fca5a5; }
+  .sev-pill.medium { background: #431407; color: #fdba74; }
+  .sev-pill.low { background: #422006; color: #fcd34d; }
+  .sev-pill.info { background: #172554; color: #93c5fd; }
+  .finding-title { font-size: 14px; font-weight: 600; color: #fff; }
+  .finding-desc { font-size: 13px; color: #ccc; line-height: 1.6; margin-top: 6px; }
+  .finding-rec { font-size: 12px; color: #888; line-height: 1.6; margin-top: 8px; padding-top: 8px; border-top: 1px solid #1a1a1a; }
+  .finding-rec strong { color: #D4263E; font-size: 10px; text-transform: uppercase; letter-spacing: 1px; }
+  .finding-evidence { background: #000; padding: 10px 12px; border-radius: 4px; font-family: 'Courier New', monospace; font-size: 11px; color: #22c55e; margin-top: 8px; white-space: pre-wrap; word-break: break-all; }
+
+  .indicator-item { font-family: 'Courier New', monospace; font-size: 12px; padding: 6px 10px; background: #0a0a0a; border-radius: 4px; margin-bottom: 4px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  .ind-type { background: #D4263E; color: #fff; padding: 1px 8px; border-radius: 10px; font-size: 10px; letter-spacing: 0.5px; text-transform: uppercase; min-width: 60px; text-align: center; }
+  .ind-value { color: #e0e0e0; word-break: break-all; flex: 1; }
+  .ind-context { color: #666; font-size: 11px; }
+
+  .no-data { color: #555; font-size: 13px; padding: 14px 0; font-style: italic; }
+
+  .footer { margin-top: 40px; padding-top: 16px; border-top: 1px solid #1a1a1a; text-align: center; font-size: 11px; color: #555; }
+  .footer a { color: #D4263E; text-decoration: none; }
+</style>
+</head>
+<body>
+<div class="container">
+
+  <div class="header">
+    <h1>ATARUS <span>PHISHCHECK</span></h1>
+    <div class="subtitle">Email security analysis report</div>
+  </div>
+
+  <div class="verdict-card {{ result.verdict }}">
+    <div class="verdict-header">
+      <div>
+        <div class="verdict-label">Verdict</div>
+        <div class="verdict-value {{ result.verdict }}">{{ result.verdict.replace('_', ' ').upper() }}</div>
+      </div>
+      <div style="text-align:right">
+        <div class="verdict-label">Phish score</div>
+        <div class="score-circle">{{ result.phish_score }}/100</div>
+      </div>
+    </div>
+    <div class="verdict-desc">
+      {% if result.verdict == 'clean' %}
+      No significant phishing indicators detected. This email appears legitimate based on the analysis.
+      {% elif result.verdict == 'questionable' %}
+      Minor indicators detected. The email may be legitimate but warrants a closer look before interacting.
+      {% elif result.verdict == 'suspicious' %}
+      Multiple suspicious indicators found. Treat this email with caution and verify the sender through an independent channel.
+      {% elif result.verdict == 'likely_phishing' %}
+      Strong phishing indicators detected. Do not click links, open attachments, or respond. Report to your security team.
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-title">Email Overview</div>
+    <table class="kv-table">
+      <tr><td>From</td><td>{{ result.headers.from_header or '(empty)' }}</td></tr>
+      <tr><td>Sender domain</td><td>{{ result.headers.from_domain or '(none)' }}</td></tr>
+      <tr><td>Reply-To</td><td>{{ result.headers.reply_to or '(same as From)' }}</td></tr>
+      <tr><td>Return-Path</td><td>{{ result.headers.return_path or '(none)' }}</td></tr>
+      <tr><td>To</td><td>{{ result.headers.to or '(empty)' }}</td></tr>
+      <tr><td>Subject</td><td>{{ result.headers.subject or '(empty)' }}</td></tr>
+      <tr><td>Date</td><td>{{ result.headers.date or '(empty)' }}</td></tr>
+      <tr><td>Message-ID</td><td>{{ result.headers.message_id or '(empty)' }}</td></tr>
+      {% if result.headers.x_mailer %}<tr><td>X-Mailer</td><td>{{ result.headers.x_mailer }}</td></tr>{% endif %}
+      {% if result.headers.x_originating_ip %}<tr><td>X-Originating-IP</td><td>{{ result.headers.x_originating_ip }}</td></tr>{% endif %}
+      <tr><td>Received hops</td><td>{{ result.headers.received_chain | length }}</td></tr>
+    </table>
+  </div>
+
+  <div class="section">
+    <div class="section-title">Authentication</div>
+    <div class="auth-grid">
+      <div class="auth-cell">
+        <div class="auth-name">SPF</div>
+        <div class="auth-result {{ result.auth.spf_result }}">{{ result.auth.spf_result.upper() }}</div>
+      </div>
+      <div class="auth-cell">
+        <div class="auth-name">DKIM</div>
+        <div class="auth-result {{ result.auth.dkim_result }}">{{ result.auth.dkim_result.upper() }}</div>
+      </div>
+      <div class="auth-cell">
+        <div class="auth-name">DMARC</div>
+        <div class="auth-result {{ result.auth.dmarc_result }}">{{ result.auth.dmarc_result.upper() }}</div>
+      </div>
+    </div>
+    {% if result.auth.spf_record or result.auth.dmarc_record %}
+    <table class="kv-table" style="margin-top: 14px">
+      {% if result.auth.spf_record %}<tr><td>SPF record</td><td>{{ result.auth.spf_record }}</td></tr>{% endif %}
+      {% if result.auth.dmarc_record %}<tr><td>DMARC record</td><td>{{ result.auth.dmarc_record }}</td></tr>{% endif %}
+      {% if result.auth.dmarc_policy %}<tr><td>DMARC policy</td><td>p={{ result.auth.dmarc_policy }}</td></tr>{% endif %}
+    </table>
+    {% endif %}
+  </div>
+
+  {% for category, label in [('authentication', 'Authentication Findings'), ('indicators', 'Indicator Findings'), ('content', 'Content Findings')] %}
+  {% if findings_by_category[category] %}
+  <div class="section">
+    <div class="section-title">{{ label }}</div>
+    {% for f in findings_by_category[category] %}
+    <div class="finding-card sev-{{ f.severity }}">
+      <div class="finding-header">
+        <span class="sev-pill {{ f.severity }}">{{ f.severity }}</span>
+        <span class="finding-title">{{ f.title }}</span>
+      </div>
+      <div class="finding-desc">{{ f.description }}</div>
+      {% if f.evidence %}<div class="finding-evidence">{{ f.evidence }}</div>{% endif %}
+      {% if f.recommendation %}<div class="finding-rec"><strong>Recommendation:</strong> {{ f.recommendation }}</div>{% endif %}
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+  {% endfor %}
+
+  {% if result.indicators %}
+  <div class="section">
+    <div class="section-title">Indicators of Compromise</div>
+    {% for type_name, items in indicators_by_type.items() %}
+    <div style="margin-bottom: 12px">
+      <div style="font-size: 11px; color: #888; margin-bottom: 6px; text-transform: uppercase; letter-spacing: 1px;">{{ type_name }} ({{ items | length }})</div>
+      {% for i in items %}
+      <div class="indicator-item">
+        <span class="ind-type">{{ i.type }}</span>
+        <span class="ind-value">{{ i.value }}</span>
+        {% if i.context %}<span class="ind-context">{{ i.context }}</span>{% endif %}
+      </div>
+      {% endfor %}
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  <div class="footer">
+    Generated by <a href="https://github.com/atarus-security/atarus-phishcheck">atarus-phishcheck</a> &middot; analyzed {{ result.analyzed_at }}
+  </div>
+
+</div>
+</body>
+</html>
