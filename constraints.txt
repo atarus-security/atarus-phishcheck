@@ -1,0 +1,15 @@
+# Dependency versions the test suite last passed with (Python 3.13, Debian 13, 2026-10-21).
+# Use as constraints, not requirements: pip install -c constraints.txt -e .
+certifi==2026.10.19
+charset-normalizer==3.5.2
+click==8.5.0
+dnspython==2.9.0
+idna==3.20
+Jinja2==3.1.6
+markdown-it-py==4.2.0
+MarkupSafe==3.0.4
+mdurl==0.1.2
+Pygments==2.21.0
+requests==2.34.2
+rich==15.0.0
+urllib3==2.8.0
