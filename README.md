@@ -68,7 +68,7 @@ git clone https://github.com/atarus-security/atarus-phishcheck.git
 cd atarus-phishcheck
 python3 -m venv venv
 source venv/bin/activate
-pip install -e .
+pip install -e .   # Python 3.10 or newer
 ```
 
 ## Usage
@@ -94,7 +94,7 @@ Batch mode generates batch-summary.html in the output directory with a sortable 
 
 ### Offline mode
 
-Skips all external lookups (URLhaus, MalwareBazaar, ip-api, URL expansion). Use for air-gapped environments or privacy-sensitive analysis.
+Skips the URLhaus, MalwareBazaar and ip-api.com lookups and URL shortener expansion. Note that the SPF and DMARC TXT lookups for the sender domain still go to your DNS resolver in offline mode, which an attacker who controls that domain can observe. For a fully air-gapped analysis, run without network access.
 
 ```bash
 atarus-phishcheck -i suspicious.eml --format all --offline
@@ -106,7 +106,7 @@ atarus-phishcheck -i suspicious.eml --format all --offline
 atarus-phishcheck -i examples/sample-phish.eml --format all
 ```
 
-The included synthetic phishing email triggers 14 findings (9 high-severity) with a phish score of 100/100:
+The included synthetic phishing email scores 100/100. Online it triggers 14 findings (9 high-severity); with `--offline` the two geolocation findings (proxy origin and geographic mismatch) are skipped and it triggers 12 findings (7 high-severity):
 
 - SPF, DKIM, DMARC authentication failures
 - Reply-To and From domain mismatch
@@ -141,7 +141,7 @@ Verdicts:
 ## Privacy and safety
 
 - No data leaves your machine except DNS queries for SPF/DMARC lookups, optional URLhaus/MalwareBazaar/ip-api queries, and HEAD requests to expand URL shorteners.
-- Use --offline to disable all external queries.
+- Use --offline to disable the reputation, geolocation and URL expansion queries. SPF and DMARC DNS lookups still run in offline mode.
 - The HTML preview is rendered in a sandboxed iframe with scripts stripped, external resources blocked (images replaced with #blocked-image), and links disabled with original destination preserved in data-original-href.
 - No page content is loaded when expanding URL shorteners. HEAD requests only.
 
@@ -151,6 +151,23 @@ Verdicts:
 - [atarus-cloud](https://github.com/atarus-security/atarus-cloud) - Multi-cloud security scanner (AWS + Azure)
 - atarus-phishcheck - Email security analyzer (you are here)
 - [atarus-report-kit](https://github.com/atarus-security/atarus-report-kit) - Pentest report builder for juniors and students
+- [atarus-webscan](https://github.com/atarus-security/atarus-webscan) - Web application security scanner
+
+## Known issues
+
+- The HTML preview iframe currently shows the sanitized email as escaped HTML source rather than a rendered page (the value is escaped twice). A fix is pending review because rendering the body also needs a Content-Security-Policy to keep remote resources blocked.
+
+## Testing
+
+```bash
+python -m unittest discover -s tests -v
+```
+
+Offline, standard library only. GitHub Actions runs the suite on every push. `constraints.txt` records the dependency versions it last passed with.
+
+## Security
+
+See [SECURITY.md](SECURITY.md) to report a vulnerability.
 
 ## License
 
