@@ -167,7 +167,7 @@ def _print_batch_summary(results: list, skipped: list, output_dir: str, policy: 
     if skipped:
         console.print(f"[bold yellow]Not analyzed:[/] {len(skipped)} file(s), listed in batch-summary.html")
     if policy.mode == "offline":
-        console.print("[yellow]Offline mode: DNS, reputation, geolocation and shortener lookups were not run (see each report).[/]")
+        console.print("[yellow]Offline mode: DNS, reputation and shortener lookups were not run (see each report).[/]")
     console.print(f"\n[bold green]Reports written to:[/] {escape(output_dir)}")
 
 
@@ -199,7 +199,7 @@ def _write_batch_summary(results: list, skipped: list, output_dir: str, policy: 
         items = "".join(f"<li><code>{_esc(os.path.basename(p))}</code>: {_esc(reason)}</li>" for p, reason in skipped)
         skipped_html = f'<h2>Not analyzed ({len(skipped)})</h2><ul class="skipped">{items}</ul>'
 
-    mode_note = "Offline mode: no DNS, reputation, geolocation or shortener lookups were made. Each report lists the checks that did not run." if policy.mode == "offline" else "Online mode: lookups enabled (" + ", ".join(_esc(x) for x in (results[0].lookups_enabled if results else [])) + "). Failed lookups are listed in each report."
+    mode_note = "Offline mode: no DNS, reputation or shortener lookups were made. Each report lists the checks that did not run." if policy.mode == "offline" else "Online mode: lookups enabled (" + ", ".join(_esc(x) for x in (results[0].lookups_enabled if results else [])) + "). Failed lookups are listed in each report."
 
     html = f'''<!DOCTYPE html>
 <html><head><meta charset="utf-8"><title>atarus-phishcheck batch summary</title>

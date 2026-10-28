@@ -2,6 +2,22 @@
 
 All notable changes to atarus-phishcheck. Dates are commit dates.
 
+## 0.5.0 (unreleased)
+
+### Removed
+
+- **The ip-api.com geolocation lookup, and with it the only plain-HTTP request the tool made.**
+
+  What was wrong: with `--online`, up to five public IP addresses from the Received and X-Originating-IP headers were sent to ip-api.com over plain HTTP, because the free endpoint has no TLS. Anyone on the path between the analyst and that service could read which addresses were being checked, and so which email was under analysis, and could alter the answer, which fed findings such as "routed through proxy/VPN" and "geographic mismatch". The free endpoint's terms also limit it to non-commercial use, which does not fit a tool a firm runs on client mail. In return the lookup added one line of value, the country and ISP of the header addresses, which an analyst can look up themselves from the addresses the report already prints.
+
+  What changed, in plain terms: the lookup is gone and nothing replaces it. `--online` now contacts only your DNS resolver, URLhaus and MalwareBazaar (both over HTTPS), plus the shortener hosts with `--expand-links`, so nothing the tool sends is unencrypted. The IP addresses found in the headers are still extracted and listed in every report as indicators, but they are no longer sent anywhere, and the three findings that depended on the lookup (proxy or VPN routing, hosting-provider origin, geographic mismatch with the claimed brand) no longer exist. Scores for `--online` runs can therefore come out lower than under 0.4.0 for an email that only those findings flagged. The offline "Checks not run" list no longer includes IP geolocation, and the README no longer lists ip-api.com as an open decision.
+
+  Technically: `analyzers/geoip.py` is deleted, including its `NETWORK` declaration, `lookup_ips`, `_lookup_single_ip`, `_infer_expected_region` and `_is_received_ip`. `pipeline.py` no longer imports it or calls it, and `_lookups()` returns `["dns-spf-dmarc", "urlhaus", "malwarebazaar"]` (plus `"shortener-expansion"` with `--expand-links`), so `lookups_enabled` in the JSON and HTML output never contains `"ip-api"`. `network.Policy.destinations()` lost its ip-api.com line and now prints three lines, four with `--expand-links`. The `--online` help text, the offline notes in `batch.py`, the README (feature list, online section, "things to know" bullet, network table row, sample section, known issues) and SECURITY.md were updated to match. `requests` stays a dependency because `reputation` uses it; no dependency was added or removed. `tests/test_safe_default.py` drops the two geoip tests and gains one that the module cannot be imported and `"ip-api"` is absent from `lookups_enabled`, and one that an online run of the sample makes no GET request and still lists the header IPs as indicators. The destination-list, network-table and User-Agent tests now cover `auth`, `reputation` and `urlexpand` and assert there is no ip-api line.
+
+### Changed
+
+- Version is 0.5.0 in `pyproject.toml` and `atarus_phishcheck.__version__`; the User-Agent strings and the JSON `version` field follow it.
+
 ## 0.4.0 (unreleased, refresh-2026-10)
 
 ### Security

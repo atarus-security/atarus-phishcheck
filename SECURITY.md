@@ -20,11 +20,11 @@ Only the latest release on the default branch receives security fixes.
 
 In scope: the code in this repository, the reports it generates, and the preview it embeds in them.
 
-Out of scope: the third-party services this project can query with `--online` (URLhaus, MalwareBazaar, ip-api.com, the public DNS system), and findings that require an attacker who already controls the machine running the tool.
+Out of scope: the third-party services this project can query with `--online` (URLhaus, MalwareBazaar, the public DNS system), and findings that require an attacker who already controls the machine running the tool.
 
 ## Using this tool
 
-atarus-phishcheck parses untrusted email and is meant to be run on hostile input. It is offline by default: a plain run makes no network connection at all. `--online` enables DNS, URLhaus, MalwareBazaar and ip-api.com lookups and prints every destination before the first one; `--online --expand-links` adds one HEAD request to each URL shortener host in the email, never to the redirect destination. The README's network table is the complete list of destinations.
+atarus-phishcheck parses untrusted email and is meant to be run on hostile input. It is offline by default: a plain run makes no network connection at all. `--online` enables DNS, URLhaus and MalwareBazaar lookups and prints every destination before the first one; `--online --expand-links` adds one HEAD request to each URL shortener host in the email, never to the redirect destination. The README's network table is the complete list of destinations.
 
 Treat generated reports as containing attacker-controlled content. The HTML preview is rebuilt from an allowlist inside a fully sandboxed iframe with a `default-src 'none'` Content-Security-Policy; open reports in a current browser.
 

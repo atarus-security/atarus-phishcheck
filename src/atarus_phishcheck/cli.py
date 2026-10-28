@@ -35,7 +35,7 @@ VERDICT_COLORS = {
 @click.option("-i", "--input", "input_path", type=click.Path(exists=True), required=True, help="Path to .eml file, .mbox file, or directory of .eml files (batch mode)")
 @click.option("-o", "--output", default="./output", help="Output directory")
 @click.option("--format", "out_format", default="all", type=click.Choice(["html", "json", "all", "terminal"]), help="Output format")
-@click.option("--online", is_flag=True, help="Allow network lookups: DNS for SPF and DMARC records, URLhaus, MalwareBazaar and ip-api.com. The destinations are printed before any lookup. Default is offline.")
+@click.option("--online", is_flag=True, help="Allow network lookups: DNS for SPF and DMARC records, URLhaus and MalwareBazaar. The destinations are printed before any lookup. Default is offline.")
 @click.option("--expand-links", is_flag=True, help="With --online: send one HEAD request to each URL shortener in the email and record where it redirects. The destination is never contacted.")
 @click.option("--offline", is_flag=True, hidden=True, help="Accepted for compatibility; offline is the default.")
 @click.option("--batch", is_flag=True, help="Batch mode: analyze a directory of .eml files or an .mbox file")
