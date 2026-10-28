@@ -28,14 +28,15 @@ def check_homoglyphs(headers: EmailHeaders, body: EmailBody) -> list:
 
     domains_to_check = set()
 
-    if headers.from_domain:
+    if headers.from_domain and len(headers.from_domain) <= 253:
         domains_to_check.add(headers.from_domain.lower())
 
     for url in body.urls:
         from urllib.parse import urlparse
         parsed = urlparse(url if url.startswith("http") else f"http://{url}")
-        if parsed.netloc:
-            domains_to_check.add(parsed.netloc.lower().split(":")[0])
+        host = (parsed.hostname or "").lower()
+        if host and len(host) <= 253:
+            domains_to_check.add(host)
 
     seen = set()
     for domain in domains_to_check:
@@ -51,7 +52,7 @@ def check_homoglyphs(headers: EmailHeaders, body: EmailBody) -> list:
                     severity="high",
                     title=f"Punycode/IDN domain detected: {domain}",
                     description=f"The domain '{domain}' uses Punycode encoding (xn--), which can hide Unicode characters that look identical to Latin characters. Decoded form: '{decoded}'. This is a common technique in homograph phishing attacks.",
-                    recommendation="Do not trust IDN domains in email without independent verification. Most legitimate organizations use standard ASCII domains.",
+                    recommendation="Do not trust IDN domains in email without independent verification. Most established organizations use standard ASCII domains.",
                     evidence=f"Encoded: {domain}\nDecoded: {decoded}",
                 ))
             except Exception:
@@ -98,7 +99,7 @@ def check_homoglyphs(headers: EmailHeaders, body: EmailBody) -> list:
                     severity="high",
                     title=f"ASCII lookalike detected: {domain} impersonates {brand}",
                     description=f"The domain '{domain}' contains the segment '{matched_segment}' which resembles '{brand}' via number/letter substitution (e.g. 1 for l, 0 for o, 5 for s). This pattern is a hallmark of brand impersonation phishing.",
-                    recommendation=f"Do not trust this domain. Legitimate {brand} uses its registered domain without numeric substitutions.",
+                    recommendation=f"Do not trust this domain. The real {brand} uses its registered domain without numeric substitutions.",
                     evidence=f"Suspicious domain: {domain}\nSuspicious segment: {matched_segment}\nImpersonating: {brand}",
                 ))
                 break

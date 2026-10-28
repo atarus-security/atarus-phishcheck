@@ -9,6 +9,37 @@ SEVERITY_WEIGHTS = {
     "info": 0,
 }
 
+VERDICTS = ("no_strong_indicators", "questionable", "suspicious", "likely_phishing")
+
+# The lowest band is a statement about what the checks that ran found, not
+# about the email being genuine. The wording must never call an email
+# legitimate, safe or clean; a test enforces that.
+VERDICT_TEXT = {
+    "no_strong_indicators": (
+        "The checks that ran found no strong phishing indicators. This does not "
+        "establish that the email is genuine: read the list of checks that did not "
+        "run, and verify the sender through a channel you already trust before "
+        "acting on anything it asks for."
+    ),
+    "questionable": (
+        "Minor indicators were found. Look closer before interacting, and treat "
+        "any request for credentials, payment or urgent action as unverified."
+    ),
+    "suspicious": (
+        "Multiple suspicious indicators were found. Treat this email with caution "
+        "and verify the sender through an independent channel."
+    ),
+    "likely_phishing": (
+        "Strong phishing indicators were found. Do not click links, open "
+        "attachments or respond. Report it to your security team."
+    ),
+    "unknown": "The email was not scored.",
+}
+
+
+def verdict_label(verdict: str) -> str:
+    return verdict.replace("_", " ").upper()
+
 
 def score_result(result: AnalysisResult) -> None:
     """Calculate phish score (0-100) and verdict. Modifies result in-place."""
@@ -42,4 +73,4 @@ def score_result(result: AnalysisResult) -> None:
     elif score >= 15:
         result.verdict = "questionable"
     else:
-        result.verdict = "clean"
+        result.verdict = "no_strong_indicators"

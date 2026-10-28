@@ -1,6 +1,7 @@
 """Analyze email content for phishing language patterns"""
 import re
 from atarus_phishcheck.models import EmailHeaders, EmailBody, Finding
+from atarus_phishcheck.analyzers.htmlscan import strip_tags, iter_tags, iter_anchors, attr_value
 
 
 URGENCY_PATTERNS = [
@@ -97,7 +98,7 @@ def analyze_content(headers: EmailHeaders, body: EmailBody) -> list:
             ))
             break
 
-    if body.html and body.text:
+    if body.html:
         if _hidden_text_in_html(body.html):
             findings.append(Finding(
                 category="content",
@@ -128,31 +129,41 @@ def _count_matches(text: str, patterns: list) -> int:
 
 
 def _strip_html(html: str) -> str:
-    if not html:
-        return ""
-    clean = re.sub(r'<[^>]+>', ' ', html)
-    clean = re.sub(r'\s+', ' ', clean)
-    return clean
+    return strip_tags(html)
+
+
+_HIDDEN_STYLE_MARKERS = ("display:none", "visibility:hidden", "font-size:0")
+_WHITE_MARKERS = ("color:#fff;", "color:#fff ", "color:#ffffff", "color:white")
 
 
 def _hidden_text_in_html(html: str) -> bool:
-    patterns = [
-        r'style="[^"]*display\s*:\s*none',
-        r'style="[^"]*visibility\s*:\s*hidden',
-        r'style="[^"]*font-size\s*:\s*0',
-        r'style="[^"]*color\s*:\s*#fff(fff)?[^"]*"[^>]*>[^<]{20,}',
-    ]
-    for p in patterns:
-        if re.search(p, html, re.IGNORECASE):
+    """Hidden text via display:none, visibility:hidden, font-size:0, or white text
+    of at least 20 characters. Walks tags once; no backtracking regex."""
+    for name, attrs, start, end in iter_tags(html):
+        if name.startswith("/"):
+            continue
+        style = attr_value(attrs, "style")
+        if not style:
+            continue
+        compact = "".join(style.lower().split())
+        if any(marker in compact for marker in _HIDDEN_STYLE_MARKERS):
             return True
+        if re.match(r'font-size:0(px|pt|em|%|;|$)', compact) or ";font-size:0" in compact:
+            return True
+        if any(marker in compact + ";" for marker in _WHITE_MARKERS):
+            next_tag = html.find("<", end + 1)
+            text = html[end + 1:next_tag if next_tag != -1 else len(html)]
+            if len(text.strip()) >= 20:
+                return True
     return False
 
 
 def _mismatched_link_text(html: str) -> bool:
-    pattern = r'<a[^>]+href=["\']([^"\']+)["\'][^>]*>([^<]+)</a>'
-    for m in re.finditer(pattern, html, re.IGNORECASE):
-        href = m.group(1).strip().lower()
-        text = m.group(2).strip().lower()
+    for href, inner in iter_anchors(html):
+        if not href:
+            continue
+        href = href.strip().lower()
+        text = strip_tags(inner).strip().lower()
 
         if not text.startswith("http") and not text.startswith("www"):
             continue
@@ -166,7 +177,16 @@ def _mismatched_link_text(html: str) -> bool:
 
 
 def _extract_domain(s: str) -> str:
-    m = re.search(r'(?:https?://)?(?:www\.)?([^/\s?#]+)', s)
-    if m:
-        return m.group(1).lower().split(":")[0]
-    return ""
+    s = s[:2048]
+    if s.startswith("https://"):
+        s = s[8:]
+    elif s.startswith("http://"):
+        s = s[7:]
+    if s.startswith("www."):
+        s = s[4:]
+    end = len(s)
+    for stop in "/ ?#\t\n":
+        i = s.find(stop)
+        if i != -1 and i < end:
+            end = i
+    return s[:end].lower().split(":")[0]

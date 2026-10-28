@@ -1,7 +1,8 @@
 """Offline unit tests for atarus-phishcheck.
 
-DNS lookups are patched out and no reputation services are called, so the
-suite runs without network access. Standard library only.
+The analyzers are offline unless given an online Policy, so nothing here can
+reach the network; test_safe_default.py adds a socket guard that proves it.
+Standard library only.
 """
 import json
 import os
@@ -68,17 +69,22 @@ class SampleTests(unittest.TestCase):
     def test_batch_directory_offline(self, _dns):
         with tempfile.TemporaryDirectory() as src, tempfile.TemporaryDirectory() as out:
             shutil.copy(SAMPLE, os.path.join(src, "a.eml"))
-            results = batch.analyze_batch(src, out, "all", offline=True)
+            results = batch.analyze_batch(src, out, "all")
             self.assertEqual(len(results), 1)
             self.assertTrue(os.path.exists(os.path.join(out, "batch-summary.html")))
 
 
 class OfflineTests(unittest.TestCase):
     def test_offline_skips_reputation_calls(self):
+        from atarus_phishcheck.models import Indicator
+        iocs = [Indicator(type="url", value="http://example.test/a"), Indicator(type="hash", value="0" * 64)]
         with mock.patch("requests.post") as post:
-            self.assertEqual(reputation.check_urls([], offline=True), [])
-            self.assertEqual(reputation.check_hashes_malwarebazaar([], offline=True), [])
+            notes = []
+            self.assertEqual(reputation.check_urls(iocs, notes=notes), [])
+            self.assertEqual(reputation.check_hashes_malwarebazaar(iocs, notes=notes), [])
             post.assert_not_called()
+        self.assertEqual(len(notes), 2)
+        self.assertEqual(iocs[0].reputation, "unknown")
 
 
 class SanitizeTests(unittest.TestCase):

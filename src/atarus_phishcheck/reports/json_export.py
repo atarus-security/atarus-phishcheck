@@ -1,16 +1,20 @@
 import os
 import json
-from dataclasses import asdict
+from atarus_phishcheck import __version__
+from atarus_phishcheck.analyzers import scoring
 from atarus_phishcheck.models import AnalysisResult
 
 
 def generate(result: AnalysisResult, output_path: str) -> str:
     data = {
         "tool": "atarus-phishcheck",
-        "version": "0.3.0",
+        "version": __version__,
         "analyzed_at": result.analyzed_at,
         "source_file": result.source_file,
+        "mode": result.mode,
+        "lookups_enabled": list(result.lookups_enabled),
         "verdict": result.verdict,
+        "verdict_text": scoring.VERDICT_TEXT.get(result.verdict, ""),
         "phish_score": result.phish_score,
         "headers": {
             "from": result.headers.from_header,
@@ -27,12 +31,14 @@ def generate(result: AnalysisResult, output_path: str) -> str:
             "received_count": len(result.headers.received_chain),
         },
         "authentication": {
+            "source": "Authentication-Results header as written by the receiving server; DKIM is not verified by this tool",
             "spf_result": result.auth.spf_result,
             "spf_record": result.auth.spf_record,
             "dkim_result": result.auth.dkim_result,
             "dmarc_result": result.auth.dmarc_result,
             "dmarc_record": result.auth.dmarc_record,
             "dmarc_policy": result.auth.dmarc_policy,
+            "records_looked_up": result.auth.records_looked_up,
         },
         "indicators": [
             {"type": i.type, "value": i.value, "context": i.context, "reputation": i.reputation}
@@ -50,9 +56,13 @@ def generate(result: AnalysisResult, output_path: str) -> str:
             for f in result.findings
         ],
         "severity_counts": result.severity_counts,
+        "checks_not_run": [
+            {"check": c.check, "reason": c.reason}
+            for c in result.checks_not_run
+        ],
     }
 
     os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
-    with open(output_path, "w") as f:
+    with open(output_path, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2)
     return output_path

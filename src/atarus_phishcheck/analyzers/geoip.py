@@ -1,19 +1,29 @@
-"""IP geolocation and ASN lookup for sender and routing analysis"""
+"""IP geolocation and ASN lookup for sender and routing analysis (online only)."""
 import requests
+from atarus_phishcheck import __version__
 from atarus_phishcheck.models import Indicator, Finding, EmailHeaders
+from atarus_phishcheck.network import Policy, OFFLINE, is_public_address
 
+NETWORK = [
+    {
+        "module": "geoip",
+        "destination": "ip-api.com over plain HTTP (the free endpoint has no TLS)",
+        "sends": "each public IP address found in the Received and X-Originating-IP headers, up to 5",
+        "when": "--online only",
+    },
+]
 
 IPAPI_URL = "http://ip-api.com/json/"
-USER_AGENT = "atarus-phishcheck/0.3.0"
+USER_AGENT = f"atarus-phishcheck/{__version__}"
 REQUEST_TIMEOUT = 5
+MAX_IPS = 5
 
 
-def lookup_ips(indicators: list, headers: EmailHeaders, offline: bool = False) -> list:
+def lookup_ips(indicators: list, headers: EmailHeaders, policy: Policy = None, notes: list = None) -> list:
     """Enrich IP indicators with geolocation. Returns list of findings."""
+    policy = policy or OFFLINE
+    notes = notes if notes is not None else []
     findings = []
-
-    if offline:
-        return findings
 
     ip_indicators = [i for i in indicators if i.type == "ip"]
     unique_ips = {}
@@ -21,11 +31,26 @@ def lookup_ips(indicators: list, headers: EmailHeaders, offline: bool = False) -
         if ind.value not in unique_ips:
             unique_ips[ind.value] = ind
 
+    if not unique_ips:
+        return findings
+
+    if not policy.online:
+        notes.append((f"IP geolocation ({len(unique_ips)} address(es))", "offline: ip-api.com was not queried (use --online)"))
+        return findings
+
+    public = {ip: ind for ip, ind in unique_ips.items() if is_public_address(ip)}
+    skipped = len(unique_ips) - len(public)
+    if skipped:
+        notes.append(("IP geolocation", f"{skipped} non-public address(es) from the headers were not sent to ip-api.com"))
+    if len(public) > MAX_IPS:
+        notes.append(("IP geolocation", f"only the first {MAX_IPS} of {len(public)} public addresses were queried"))
+
     sender_brand_context = _infer_expected_region(headers)
 
-    for ip, ind in list(unique_ips.items())[:5]:
-        geo_data = _lookup_single_ip(ip)
-        if not geo_data:
+    for ip, ind in list(public.items())[:MAX_IPS]:
+        geo_data, error = _lookup_single_ip(ip)
+        if error:
+            notes.append((f"IP geolocation for {ip}", f"lookup failed: {error}"))
             continue
 
         country_code = geo_data.get("countryCode", "")
@@ -63,7 +88,7 @@ def lookup_ips(indicators: list, headers: EmailHeaders, offline: bool = False) -
                 category="indicators",
                 severity="high",
                 title=f"Email routed through proxy/VPN: {ip}",
-                description=f"The IP '{ip}' ({location}) is flagged as a proxy or anonymizer. Legitimate email infrastructure does not route through consumer proxies.",
+                description=f"The IP '{ip}' ({location}) is flagged by ip-api.com as a proxy or anonymizer. Established email infrastructure does not route through consumer proxies.",
                 recommendation="Treat with high suspicion. Proxy/VPN routing of outbound email is commonly associated with phishing campaigns attempting to obscure origin.",
                 evidence=evidence,
             ))
@@ -72,7 +97,7 @@ def lookup_ips(indicators: list, headers: EmailHeaders, offline: bool = False) -
                 category="indicators",
                 severity="low",
                 title=f"Email sent from hosting provider: {isp or 'unknown'}",
-                description=f"The IP '{ip}' ({location}) belongs to a hosting/datacenter provider ({isp}). While legitimate services often use hosting, phishing kits are frequently hosted on cheap VPS infrastructure.",
+                description=f"The IP '{ip}' ({location}) belongs to a hosting/datacenter provider ({isp}). Many services use hosting, but phishing kits are frequently hosted on cheap VPS infrastructure.",
                 recommendation="Combined with other indicators, hosting-provider origin can indicate attacker-controlled infrastructure.",
                 evidence=evidence,
             ))
@@ -84,34 +109,37 @@ def lookup_ips(indicators: list, headers: EmailHeaders, offline: bool = False) -
                     category="indicators",
                     severity="high",
                     title=f"Geographic mismatch: email claims {sender_brand_context.get('name')} but originates from {country}",
-                    description=f"The sending IP '{ip}' is located in {country} ({city}). The email claims to be from {sender_brand_context.get('name')}, whose legitimate email infrastructure typically originates from {', '.join(expected)}. Major brands and government agencies have geographically consistent email infrastructure.",
-                    recommendation="Strong indicator of brand impersonation or sender spoofing. Legitimate brand emails rarely originate from geographically unrelated countries.",
+                    description=f"The sending IP '{ip}' is located in {country} ({city}). The email claims to be from {sender_brand_context.get('name')}, whose email infrastructure typically originates from {', '.join(expected)}. Major brands and government agencies have geographically consistent email infrastructure.",
+                    recommendation="Strong indicator of brand impersonation or sender spoofing. Brand emails rarely originate from geographically unrelated countries.",
                     evidence=evidence,
                 ))
 
     return findings
 
 
-def _lookup_single_ip(ip: str) -> dict:
-    """Query ip-api.com for geolocation data"""
+def _lookup_single_ip(ip: str) -> tuple:
+    """Query ip-api.com. Returns (data, error)."""
     try:
         resp = requests.get(
-            f"{IPAPI_URL}{ip}?fields=status,country,countryCode,region,regionName,city,isp,org,as,mobile,proxy,hosting",
+            f"{IPAPI_URL}{ip}?fields=status,message,country,countryCode,region,regionName,city,isp,org,as,mobile,proxy,hosting",
             headers={"User-Agent": USER_AGENT},
             timeout=REQUEST_TIMEOUT,
         )
-        if resp.status_code != 200:
-            return {}
+    except requests.exceptions.RequestException as e:
+        return {}, type(e).__name__
+    if resp.status_code != 200:
+        return {}, f"HTTP {resp.status_code}"
+    try:
         data = resp.json()
-        if data.get("status") != "success":
-            return {}
-        return data
-    except Exception:
-        return {}
+    except ValueError:
+        return {}, "response was not JSON"
+    if not isinstance(data, dict) or data.get("status") != "success":
+        return {}, f"ip-api.com answered: {str((data or {}).get('message', 'no data'))[:100]}"
+    return data, None
 
 
 def _infer_expected_region(headers: EmailHeaders) -> dict:
-    """Based on From domain and content, guess expected country codes for legitimate mail"""
+    """Based on From domain and content, guess expected country codes for the claimed sender"""
     domain = (headers.from_domain or "").lower()
     from_name = (headers.from_name or "").lower()
     subject = (headers.subject or "").lower()
