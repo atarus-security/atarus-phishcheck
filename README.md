@@ -18,6 +18,7 @@ Built for SOC analysts, incident responders, and anyone who needs to make a quic
 
 **Extracts indicators of compromise**
 - URLs, domains, IP addresses, email addresses, attachment hashes (MD5, SHA-256)
+- The IP addresses from the headers are listed in the report as found. The tool does not look them up; country, ISP and ASN are left to you.
 - Flags suspicious TLDs, raw IP URLs, URL shorteners, dangerous attachment types, double extensions
 
 **Analyzes content**
@@ -40,10 +41,6 @@ Library of 25 major brands (PayPal, Microsoft, Google, Apple, Amazon, Chase, Ban
 **Reads where a URL shortener points (opt-in)**
 
 With `--online --expand-links`, one HEAD request goes to each shortener host (bit.ly, tinyurl.com, t.co and 19 others) and the Location header is recorded. The destination is never contacted, only the first hop is read, and a shortener that resolves to a private or internal address is refused before any request. A destination inside a private, loopback, link-local or cloud-metadata range is reported as a high-severity finding.
-
-**Geolocates sending infrastructure (opt-in)**
-
-With `--online`, looks up country, city, ISP, organization and ASN for the public IPs in the Received chain through ip-api.com. Flags proxy/VPN routing, hosting-provider origin and geographic mismatches.
 
 **Checks threat intel feeds (opt-in)**
 - URLhaus for malicious URL reputation
@@ -95,7 +92,7 @@ Batch mode generates batch-summary.html in the output directory with a table of 
 
 ### Offline by default
 
-A plain run makes no network connection of any kind: no DNS query, no reputation lookup, no geolocation, no shortener request. Everything that needs the network is listed under "Checks not run" in the terminal summary, the HTML report and the JSON output, with the flag that would enable it.
+A plain run makes no network connection of any kind: no DNS query, no reputation lookup, no shortener request. Everything that needs the network is listed under "Checks not run" in the terminal summary, the HTML report and the JSON output, with the flag that would enable it.
 
 ### Online lookups
 
@@ -104,13 +101,12 @@ atarus-phishcheck -i suspicious.eml --format all --online
 atarus-phishcheck -i suspicious.eml --format all --online --expand-links
 ```
 
-`--online` enables the DNS, URLhaus, MalwareBazaar and ip-api.com lookups. Before anything is sent, the tool prints every destination the run may contact. `--expand-links` additionally sends one HEAD request to each URL shortener host in the email; it is refused without `--online`. A lookup that fails (timeout, HTTP error, a feed that now needs an API key) is listed under "Checks not run" rather than silently counted as a pass.
+`--online` enables the DNS, URLhaus and MalwareBazaar lookups. Before anything is sent, the tool prints every destination the run may contact. `--expand-links` additionally sends one HEAD request to each URL shortener host in the email; it is refused without `--online`. A lookup that fails (timeout, HTTP error, a feed that now needs an API key) is listed under "Checks not run" rather than silently counted as a pass.
 
 Things to know before going online:
 
 - The sender domain's name servers may see the SPF and DMARC queries your resolver makes. If the attacker runs that domain, that is a signal the email was analyzed.
 - Full URLs from the email, which often carry a per-recipient token, are sent to URLhaus.
-- ip-api.com's free endpoint is plain HTTP and licensed for non-commercial use.
 - `--expand-links` tells the shortener service, but never the final destination, that the link was looked up.
 
 `--offline` is still accepted and does nothing, since offline is the default.
@@ -123,7 +119,6 @@ Things to know before going online:
 | auth | your system DNS resolver (which may ask the sender domain's authoritative name servers) | TXT queries for the From domain and for `_dmarc.<From domain>` | `--online` only |
 | reputation | urlhaus-api.abuse.ch over HTTPS | each URL found in the email, up to 10, as a POST form field | `--online` only |
 | reputation | mb-api.abuse.ch over HTTPS | the SHA-256 of each attachment, up to 10, as a POST form field | `--online` only |
-| geoip | ip-api.com over plain HTTP | each public IP from the Received and X-Originating-IP headers, up to 5; private addresses are never sent | `--online` only |
 | urlexpand | the URL shortener host named in the email, only if it is in the built-in shortener list and all of its addresses are public | one HEAD request for the shortened path with User-Agent `atarus-phishcheck/<version>`; the Location header is read and never followed | `--online --expand-links` only |
 
 Each of these modules declares the same information in a `NETWORK` list at the top of its source file. Nothing else in the package imports a network library.
@@ -148,7 +143,7 @@ The included synthetic phishing email scores 100/100 offline, with 14 findings (
 - Authority impersonation
 - Generic greeting
 
-The report also lists five checks that did not run offline: DKIM verification (never performed by this tool), the SPF and DMARC record lookup, shortener expansion, URLhaus reputation and IP geolocation. With `--online` the lookups add geolocation and reputation findings when those services return data.
+The report also lists four checks that did not run offline: DKIM verification (never performed by this tool), the SPF and DMARC record lookup, shortener expansion and URLhaus reputation. With `--online` the lookups add DNS and reputation findings when those services return data.
 
 ## How the score works
 
@@ -195,7 +190,6 @@ The lowest band means the checks that ran found no strong indicator. It is never
 ## Known issues
 
 - abuse.ch's URLhaus and MalwareBazaar APIs may require an Auth-Key. The tool sends none; a refused lookup now shows under "Checks not run" with the HTTP status instead of passing silently. Key support is not implemented.
-- ip-api.com is reached over plain HTTP because its free endpoint has no TLS, and its terms limit it to non-commercial use. Whether to keep it is an open decision; it only runs with `--online`.
 - The confusable-Unicode check in the homoglyph module depends on an optional library that is not a dependency and is skipped when absent. Punycode and ASCII lookalike checks always run.
 - The preview removes style sheets, so a heavily styled email renders plainer than the original.
 

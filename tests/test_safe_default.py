@@ -8,6 +8,7 @@ Standard library only.
 import http.server
 import json
 import os
+import importlib
 import re
 import shutil
 import socket
@@ -20,7 +21,7 @@ from unittest import mock
 from click.testing import CliRunner
 
 from atarus_phishcheck import __version__, cli, network, pipeline
-from atarus_phishcheck.analyzers import auth, content, geoip, parser, reputation, scoring, urlexpand
+from atarus_phishcheck.analyzers import auth, content, parser, reputation, scoring, urlexpand
 from atarus_phishcheck.analyzers.sanitize import sanitize_html_for_preview
 from atarus_phishcheck.models import Indicator, EmailHeaders
 from atarus_phishcheck.network import Policy
@@ -113,7 +114,8 @@ class OfflineDefaultTests(SocketGuard):
         self.assertIn("SPF and DMARC record lookup", checks)
         self.assertIn("URL shortener expansion", checks)
         self.assertIn("URLhaus reputation", checks)
-        self.assertIn("IP geolocation", checks)
+        self.assertNotIn("geolocation", checks.lower())
+        self.assertNotIn("ip-api", checks.lower())
         self.assertIn("DKIM signature verification", checks)
         for c in result.checks_not_run:
             if "DKIM signature" in c.check:
@@ -152,7 +154,6 @@ class OfflineDefaultTests(SocketGuard):
         iocs = [Indicator(type="url", value="https://bit.ly/abc"), Indicator(type="ip", value="93.184.216.34")]
         self.assertEqual(urlexpand.expand_urls(iocs), ([], []))
         self.assertEqual(reputation.check_urls(iocs), [])
-        self.assertEqual(geoip.lookup_ips(iocs, headers), [])
 
     def test_expand_links_without_online_sends_nothing(self):
         notes = []
@@ -212,22 +213,26 @@ class OnlineLookupTests(SocketGuard):
         self.assertEqual(len(findings), 1)
         self.assertEqual(iocs[0].reputation, "malicious")
 
-    def test_geoip_skips_private_ips_and_records_failures(self):
-        headers = EmailHeaders(received_chain=["from x [10.0.0.5]", "from y [93.184.216.34]"])
-        iocs = [Indicator(type="ip", value="10.0.0.5"), Indicator(type="ip", value="93.184.216.34")]
-        notes = []
-        answer = mock.Mock(status_code=429, json=lambda: {})
-        with mock.patch("atarus_phishcheck.analyzers.geoip.requests.get", return_value=answer) as get:
-            geoip.lookup_ips(iocs, headers, policy=Policy(online=True), notes=notes)
-        self.assertEqual(get.call_count, 1)
-        self.assertIn("93.184.216.34", get.call_args[0][0])
-        self.assertTrue(any("non-public" in reason for _, reason in notes))
-        self.assertTrue(any("HTTP 429" in reason for _, reason in notes))
+    def test_geolocation_lookup_is_gone(self):
+        with self.assertRaises(ImportError):
+            importlib.import_module("atarus_phishcheck.analyzers.geoip")
+        self.assertFalse(hasattr(pipeline, "geoip"))
+        self.assertFalse(os.path.exists(os.path.join(ROOT, "src", "atarus_phishcheck", "analyzers", "geoip.py")))
+        self.assertNotIn("ip-api", pipeline._lookups(Policy(online=True, expand_links=True)))
 
-    def test_unmocked_lookup_fails_loudly(self):
-        iocs = [Indicator(type="ip", value="93.184.216.34")]
-        with self.assertRaises(AssertionError):
-            geoip.lookup_ips(iocs, EmailHeaders(), policy=Policy(online=True), notes=[])
+    def test_online_run_sends_header_ips_nowhere(self):
+        """The addresses are still listed as indicators, but no request goes out for them."""
+        with mock.patch("atarus_phishcheck.analyzers.auth.dns.resolver.resolve", side_effect=TimeoutError("x")), \
+                mock.patch("atarus_phishcheck.analyzers.reputation.requests.post", return_value=mock.Mock(status_code=503, json=lambda: {})), \
+                mock.patch("requests.get", side_effect=AssertionError("no GET is expected in an online run")), \
+                mock.patch("requests.Session.request", side_effect=AssertionError("no requests session call is expected")):
+            result = pipeline.analyze_raw(sample_raw(), "sample", Policy(online=True))
+        self.assertTrue([i for i in result.indicators if i.type == "ip"])
+        self.assertNotIn("ip-api", result.lookups_enabled)
+        titles = " ".join(f.title.lower() for f in result.findings)
+        self.assertNotIn("proxy/vpn", titles)
+        self.assertNotIn("geographic mismatch", titles)
+        self.assertNotIn("hosting provider", titles)
 
 
 class _RedirectHandler(http.server.BaseHTTPRequestHandler):
@@ -349,13 +354,13 @@ class CliTests(SocketGuard):
     def test_online_prints_destinations_before_lookups(self):
         with mock.patch("atarus_phishcheck.analyzers.auth.dns.resolver.resolve", side_effect=TimeoutError("x")), \
                 mock.patch("atarus_phishcheck.analyzers.reputation.requests.post", return_value=mock.Mock(status_code=503, json=lambda: {})), \
-                mock.patch("atarus_phishcheck.analyzers.geoip.requests.get", return_value=mock.Mock(status_code=503, json=lambda: {})), \
                 mock.patch("atarus_phishcheck.analyzers.urlexpand.public_addresses", side_effect=ValueError("no resolver in tests")):
             res = self.runner.invoke(cli.main, ["-i", SAMPLE, "--format", "json", "-o", self.out, "--online", "--expand-links"])
         self.assertEqual(res.exit_code, 0, res.output)
         self.assertIn("Online mode", res.output)
         self.assertIn("urlhaus-api.abuse.ch", res.output)
-        self.assertIn("ip-api.com", res.output)
+        self.assertNotIn("ip-api", res.output)
+        self.assertNotIn("plain HTTP", res.output)
         self.assertIn("DNS resolver", res.output)
         self.assertIn("shortener", res.output)
         self.assertLess(res.output.index("Online mode"), res.output.index("Analyzing"))
@@ -480,17 +485,21 @@ class NetworkTableTests(unittest.TestCase):
         with open(os.path.join(ROOT, "README.md")) as f:
             readme = f.read()
         self.assertIn("What this tool sends over the network", readme)
-        for module in (auth, reputation, geoip, urlexpand):
+        for module in (auth, reputation, urlexpand):
             self.assertTrue(module.NETWORK, module.__name__)
             for entry in module.NETWORK:
                 self.assertIn("--online", entry["when"])
-        for host in ("urlhaus-api.abuse.ch", "mb-api.abuse.ch", "ip-api.com", "DNS resolver", "shortener"):
+        for host in ("urlhaus-api.abuse.ch", "mb-api.abuse.ch", "DNS resolver", "shortener"):
             self.assertIn(host, readme)
-        for line in Policy(online=True, expand_links=True).destinations("example.test"):
+        lines = Policy(online=True, expand_links=True).destinations("example.test")
+        for line in lines:
             self.assertTrue(line)
+        self.assertEqual(len(lines), 4)
+        self.assertFalse([l for l in lines if "ip-api" in l or "plain HTTP" in l])
+        self.assertNotIn("ip-api", readme.lower())
 
     def test_user_agents_follow_the_version(self):
-        for module in (reputation, geoip, urlexpand):
+        for module in (reputation, urlexpand):
             self.assertEqual(module.USER_AGENT, f"atarus-phishcheck/{__version__}")
 
 

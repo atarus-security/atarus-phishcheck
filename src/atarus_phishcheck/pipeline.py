@@ -1,5 +1,5 @@
 """The one place an email is analysed. The CLI and batch mode both call this."""
-from atarus_phishcheck.analyzers import parser, auth, indicators, content, scoring, brands, reputation, urlexpand, geoip, homoglyph
+from atarus_phishcheck.analyzers import parser, auth, indicators, content, scoring, brands, reputation, urlexpand, homoglyph
 from atarus_phishcheck.models import AnalysisResult
 from atarus_phishcheck.network import Policy, OFFLINE
 
@@ -23,13 +23,12 @@ def analyze_raw(raw: str, source: str, policy: Policy = None) -> AnalysisResult:
     ioc_list.extend(expanded_indicators)
     rep_findings = reputation.check_urls(ioc_list, policy=policy, notes=notes)
     rep_findings.extend(reputation.check_hashes_malwarebazaar(ioc_list, policy=policy, notes=notes))
-    geo_findings = geoip.lookup_ips(ioc_list, headers, policy=policy, notes=notes)
 
     result = AnalysisResult(source_file=source, headers=headers, body=body, auth=auth_result)
     result.mode = policy.mode
     result.lookups_enabled = _lookups(policy)
     result.indicators = ioc_list
-    for f in auth_findings + ioc_findings + content_findings + brand_findings + homoglyph_findings + expand_findings + rep_findings + geo_findings:
+    for f in auth_findings + ioc_findings + content_findings + brand_findings + homoglyph_findings + expand_findings + rep_findings:
         result.add_finding(f)
     for note in body.truncated:
         result.note_not_run("Full body analysis", note)
@@ -48,7 +47,7 @@ def analyze_file(path: str, policy: Policy = None) -> AnalysisResult:
 def _lookups(policy: Policy) -> list:
     if not policy.online:
         return []
-    enabled = ["dns-spf-dmarc", "urlhaus", "malwarebazaar", "ip-api"]
+    enabled = ["dns-spf-dmarc", "urlhaus", "malwarebazaar"]
     if policy.expand_links:
         enabled.append("shortener-expansion")
     return enabled

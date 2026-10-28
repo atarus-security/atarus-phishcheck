@@ -36,7 +36,6 @@ class Policy:
             f"your DNS resolver: TXT queries for {domain} and _dmarc.{domain} (SPF and DMARC records)",
             "urlhaus-api.abuse.ch over HTTPS: each URL found in the email, up to 10",
             "mb-api.abuse.ch over HTTPS: the SHA-256 of each attachment, up to 10",
-            "ip-api.com over plain HTTP: each public IP address from the headers, up to 5",
         ]
         if self.expand_links:
             lines.append("each URL shortener host named in the email: one HEAD request, up to 10, the redirect is read but never followed")
