@@ -13,14 +13,14 @@
   .header .subtitle { font-size: 13px; color: #888; margin-top: 4px; }
 
   .verdict-card { border-radius: 8px; padding: 24px 28px; margin-bottom: 28px; border: 1px solid #1a1a1a; }
-  .verdict-card.clean { background: #0a1f0e; border-color: #16a34a; }
+  .verdict-card.no_strong_indicators { background: #0a1f0e; border-color: #16a34a; }
   .verdict-card.questionable { background: #1f1a0a; border-color: #d97706; }
   .verdict-card.suspicious { background: #1f150a; border-color: #ea580c; }
   .verdict-card.likely_phishing { background: #1f0a0a; border-color: #D4263E; }
   .verdict-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
   .verdict-label { font-size: 11px; letter-spacing: 1.5px; text-transform: uppercase; color: #888; }
   .verdict-value { font-size: 22px; font-weight: 700; margin-top: 4px; }
-  .verdict-value.clean { color: #22c55e; }
+  .verdict-value.no_strong_indicators { color: #22c55e; }
   .verdict-value.questionable { color: #eab308; }
   .verdict-value.suspicious { color: #f97316; }
   .verdict-value.likely_phishing { color: #ef4444; }
@@ -42,6 +42,10 @@
   .auth-result.pass { color: #22c55e; }
   .auth-result.fail { color: #ef4444; }
   .auth-result.softfail, .auth-result.neutral, .auth-result.none { color: #eab308; }
+  .auth-result.unknown { color: #888; }
+  .mode-line { font-size: 12px; color: #fcd34d; margin-top: 8px; }
+  .notrun-item { font-size: 13px; color: #ccc; padding: 8px 12px; background: #0a0a0a; border-left: 3px solid #eab308; border-radius: 4px; margin-bottom: 6px; }
+  .notrun-item strong { color: #fcd34d; font-weight: 600; }
 
   .finding-card { background: #0a0a0a; border: 1px solid #1a1a1a; border-left: 3px solid #888; border-radius: 6px; padding: 14px 18px; margin-bottom: 10px; }
   .finding-card.sev-high { border-left-color: #ef4444; }
@@ -76,39 +80,40 @@
 
   <div class="header">
     <h1>ATARUS <span>PHISHCHECK</span></h1>
-    <div class="subtitle">Email security analysis report</div>
+    <div class="subtitle">Email security analysis report &middot; v{{ version }}</div>
+    <div class="mode-line">Mode: {{ result.mode }}{% if result.mode == 'offline' %} (no network lookups were made){% else %} (lookups: {{ result.lookups_enabled | join(', ') }}){% endif %}</div>
   </div>
 
   <div class="verdict-card {{ result.verdict }}">
     <div class="verdict-header">
       <div>
         <div class="verdict-label">Verdict</div>
-        <div class="verdict-value {{ result.verdict }}">{{ result.verdict.replace('_', ' ').upper() }}</div>
+        <div class="verdict-value {{ result.verdict }}">{{ verdict_label }}</div>
       </div>
       <div style="text-align:right">
         <div class="verdict-label">Phish score</div>
         <div class="score-circle">{{ result.phish_score }}/100</div>
       </div>
     </div>
-    <div class="verdict-desc">
-      {% if result.verdict == 'clean' %}
-      No significant phishing indicators detected. This email appears legitimate based on the analysis.
-      {% elif result.verdict == 'questionable' %}
-      Minor indicators detected. The email may be legitimate but warrants a closer look before interacting.
-      {% elif result.verdict == 'suspicious' %}
-      Multiple suspicious indicators found. Treat this email with caution and verify the sender through an independent channel.
-      {% elif result.verdict == 'likely_phishing' %}
-      Strong phishing indicators detected. Do not click links, open attachments, or respond. Report to your security team.
-      {% endif %}
-    </div>
+    <div class="verdict-desc">{{ verdict_text }}</div>
   </div>
 
+
+  {% if result.checks_not_run %}
+  <div class="section">
+    <div class="section-title">Checks Not Run</div>
+    <p style="color:#888;font-size:12px;margin-bottom:12px;line-height:1.6">These checks did not run or did not complete. The score and verdict above are based only on the checks that did.</p>
+    {% for c in result.checks_not_run %}
+    <div class="notrun-item"><strong>{{ c.check }}</strong>: {{ c.reason }}</div>
+    {% endfor %}
+  </div>
+  {% endif %}
 
   {% if preview_available %}
   <div class="section">
     <div class="section-title">Email Preview (Sandboxed)</div>
-    <p style="color:#888;font-size:12px;margin-bottom:12px;line-height:1.6">The email body is rendered below in an isolated iframe with scripts removed, external resources blocked, and all links disabled. Use this preview to visually assess what the recipient would have seen without any risk of malicious content executing.</p>
-    <iframe sandbox="allow-same-origin" srcdoc="{{ preview_html }}" style="width:100%;height:480px;border:1px solid #1a1a1a;border-radius:6px;background:#fff;"></iframe>
+    <p style="color:#888;font-size:12px;margin-bottom:12px;line-height:1.6">The email body is rebuilt below from an allowlist of tags and attributes, inside an iframe with an empty sandbox attribute and a Content-Security-Policy of default-src 'none': no scripts, no images, no remote resources, no forms, every link disabled. Use it to see roughly what the recipient saw. Layout may differ from the original because style sheets are removed.</p>
+    <iframe sandbox="" referrerpolicy="no-referrer" srcdoc="{{ preview_html }}" style="width:100%;height:480px;border:1px solid #1a1a1a;border-radius:6px;background:#fff;"></iframe>
   </div>
   {% endif %}
 
@@ -131,6 +136,7 @@
 
   <div class="section">
     <div class="section-title">Authentication</div>
+    <p style="color:#888;font-size:12px;margin-bottom:12px;line-height:1.6">Results as recorded in the Authentication-Results header by the receiving mail server. UNKNOWN means no result was present. This tool does not verify DKIM signatures itself.</p>
     <div class="auth-grid">
       <div class="auth-cell">
         <div class="auth-name">SPF</div>
@@ -192,7 +198,7 @@
   {% endif %}
 
   <div class="footer">
-    Generated by <a href="https://github.com/atarus-security/atarus-phishcheck">atarus-phishcheck</a> &middot; analyzed {{ result.analyzed_at }}
+    Generated by <a href="https://github.com/atarus-security/atarus-phishcheck">atarus-phishcheck</a> v{{ version }} &middot; analyzed {{ result.analyzed_at }} &middot; {{ result.mode }} mode
   </div>
 
 </div>

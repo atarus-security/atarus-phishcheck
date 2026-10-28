@@ -1,6 +1,6 @@
 """Extract indicators of compromise from email content"""
+import email.utils
 import re
-import dns.resolver
 from urllib.parse import urlparse
 from atarus_phishcheck.models import Indicator, EmailHeaders, EmailBody, Finding
 
@@ -54,7 +54,9 @@ def extract_indicators(headers: EmailHeaders, body: EmailBody) -> tuple:
 
     for url in body.urls:
         parsed = urlparse(url if url.startswith("http") else f"http://{url}")
-        domain = parsed.netloc.lower().split(":")[0]
+        domain = (parsed.hostname or "").lower()
+        if len(domain) > MAX_HOSTNAME:
+            continue
         if domain:
             indicators.append(Indicator(type="url", value=url, context="Email body"))
             indicators.append(Indicator(type="domain", value=domain, context="URL in body"))
@@ -64,7 +66,7 @@ def extract_indicators(headers: EmailHeaders, body: EmailBody) -> tuple:
                     category="indicators",
                     severity="high",
                     title=f"URL uses raw IP address: {domain}",
-                    description=f"The link '{url}' uses a raw IP address instead of a domain name. Legitimate organizations almost never use raw IPs in customer-facing links.",
+                    description=f"The link '{url}' uses a raw IP address instead of a domain name. Established organizations almost never use raw IPs in customer-facing links.",
                     recommendation="Do not click. This is a strong phishing indicator, especially when combined with urgency or authority impersonation in the email body.",
                     evidence=url,
                 ))
@@ -77,7 +79,7 @@ def extract_indicators(headers: EmailHeaders, body: EmailBody) -> tuple:
                     severity="medium",
                     title=f"URL uses suspicious TLD: .{tld}",
                     description=f"The link '{url}' uses the '.{tld}' top-level domain. This TLD is frequently abused for phishing due to low registration cost and lax abuse enforcement.",
-                    recommendation="Investigate the domain before clicking. Verify through independent channels that the sender legitimately uses this TLD.",
+                    recommendation="Investigate the domain before clicking. Verify through independent channels that the sender really uses this TLD.",
                     evidence=url,
                 ))
 
@@ -88,7 +90,7 @@ def extract_indicators(headers: EmailHeaders, body: EmailBody) -> tuple:
                     severity="medium",
                     title=f"URL uses a shortener: {base_domain}",
                     description=f"The link '{url}' uses a URL shortener, which hides the actual destination. This is a common technique in phishing to bypass URL reputation checks.",
-                    recommendation="Do not click shortener URLs in unsolicited emails. Expand the URL through a safe resolver (e.g. unshorten.it) before evaluating.",
+                    recommendation="Do not click shortener URLs in unsolicited emails. Expand the URL through a safe resolver (or this tool's --online --expand-links option) before evaluating.",
                     evidence=url,
                 ))
 
@@ -150,9 +152,15 @@ def extract_indicators(headers: EmailHeaders, body: EmailBody) -> tuple:
     return indicators, findings
 
 
+MAX_HOSTNAME = 253
+
+
 def _extract_email(s: str) -> str:
-    m = re.search(r'[\w\.-]+@[\w\.-]+\.\w+', s)
-    return m.group(0).lower() if m else ""
+    """First address in a header value, via the standard library parser (linear)."""
+    for _name, address in email.utils.getaddresses([s[:4096]]):
+        if "@" in address:
+            return address.strip().lower()
+    return ""
 
 
 def _is_ip_address(s: str) -> bool:

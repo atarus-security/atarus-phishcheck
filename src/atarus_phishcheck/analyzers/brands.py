@@ -1,6 +1,6 @@
 """Detect brand impersonation in email sender and content"""
-import re
 from atarus_phishcheck.models import EmailHeaders, EmailBody, Finding
+from atarus_phishcheck.analyzers.htmlscan import strip_tags
 
 
 BRAND_LIBRARY = {
@@ -154,7 +154,7 @@ def check_brand_impersonation(headers: EmailHeaders, body: EmailBody) -> list:
             category="indicators",
             severity=severity,
             title=f"Brand impersonation: claims to be {brand_display}",
-            description=f"The email references '{matched_keyword}' but the sender domain '{sender_domain}' is not a known legitimate domain for {brand_display}. Legitimate {brand_display} emails come from domains like: {', '.join(legit_domains[:3])}.",
+            description=f"The email references '{matched_keyword}' but the sender domain '{sender_domain}' is not a known legitimate domain for {brand_display}. Genuine {brand_display} email comes from domains such as: {', '.join(legit_domains[:3])}.",
             recommendation=f"Do not trust this email as coming from {brand_display}. Verify any {brand_display}-related action by logging into your account directly at the official website.",
             evidence=f"Sender domain: {sender_domain}\nClaimed brand: {brand_display}\nDetected in: {_where_detected(matched_keyword, headers, body)}",
         ))
@@ -177,8 +177,4 @@ def _where_detected(keyword: str, headers: EmailHeaders, body: EmailBody) -> str
 
 
 def _strip_html(html: str) -> str:
-    if not html:
-        return ""
-    clean = re.sub(r'<[^>]+>', ' ', html)
-    clean = re.sub(r'\s+', ' ', clean)
-    return clean
+    return strip_tags(html)
