@@ -5,7 +5,9 @@ replaces the socket layer with functions that raise. A lookup that is not
 mocked therefore fails loudly instead of quietly reaching the internet.
 Standard library only.
 """
+import contextlib
 import http.server
+import ipaddress
 import json
 import os
 import importlib
@@ -64,6 +66,26 @@ def email_with(html_body="", text_body="", extra_headers=""):
     return f"From: a@example.test\nTo: b@example.test\nSubject: t\n{extra_headers}Content-Type: text/plain; charset=utf-8\n\n{text_body}"
 
 
+_DOCUMENTATION = [ipaddress.ip_network(n) for n in ("192.0.2.0/24", "198.51.100.0/24", "203.0.113.0/24", "2001:db8::/32")]
+
+
+def documentation_ranges_as_public():
+    """Let the documentation ranges stand in for routable addresses, so the
+    tests carry no real public address. Every other range keeps the
+    standard library's answer, so the guard's other checks still run."""
+    stack = contextlib.ExitStack()
+    for cls in (ipaddress.IPv4Address, ipaddress.IPv6Address):
+        for name, value in (("is_private", False), ("is_global", True), ("is_reserved", False)):
+            original = getattr(cls, name)
+
+            def prop(self, _original=original, _value=value):
+                if any(self.version == n.version and self in n for n in _DOCUMENTATION):
+                    return _value
+                return _original.fget(self)
+            stack.enter_context(mock.patch.object(cls, name, property(prop)))
+    return stack
+
+
 class AddressGuardTests(unittest.TestCase):
     def test_non_public_addresses_are_refused(self):
         for ip in ("10.0.0.5", "127.0.0.1", "169.254.169.254", "192.168.1.1", "172.16.0.9", "100.64.0.1",
@@ -71,23 +93,30 @@ class AddressGuardTests(unittest.TestCase):
                    "::", "2002:0a00:0001::", "not-an-ip", ""):
             self.assertFalse(network.is_public_address(ip), ip)
 
+    def test_documentation_addresses_are_not_public(self):
+        for ip in ("192.0.2.1", "198.51.100.7", "203.0.113.9", "2001:db8::1"):
+            self.assertFalse(network.is_public_address(ip), ip)
+
     def test_public_addresses_are_accepted(self):
-        for ip in ("93.184.216.34", "8.8.8.8", "2606:4700::1111", "[203.0.114.1]"):
-            self.assertTrue(network.is_public_address(ip), ip)
+        with documentation_ranges_as_public():
+            for ip in ("203.0.113.34", "198.51.100.8", "2001:db8::1111", "[203.0.113.1]", "::ffff:203.0.113.5"):
+                self.assertTrue(network.is_public_address(ip), ip)
+            for ip in ("10.0.0.5", "127.0.0.1", "169.254.169.254", "::1"):
+                self.assertFalse(network.is_public_address(ip), ip)
 
     def test_resolution_to_private_is_refused_without_connecting(self):
-        infos = [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 80)),
+        infos = [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("203.0.113.34", 80)),
                  (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("10.1.2.3", 80))]
-        with mock.patch.object(socket, "getaddrinfo", return_value=infos), mock.patch.object(socket, "create_connection", side_effect=_blocked):
+        with documentation_ranges_as_public(), mock.patch.object(socket, "getaddrinfo", return_value=infos), mock.patch.object(socket, "create_connection", side_effect=_blocked):
             with self.assertRaises(ValueError) as ctx:
                 network.public_addresses("short.example", 80)
         self.assertIn("non-public", str(ctx.exception))
 
     def test_literal_private_host_refused_without_resolving(self):
-        with mock.patch.object(socket, "getaddrinfo", side_effect=_blocked):
+        with documentation_ranges_as_public(), mock.patch.object(socket, "getaddrinfo", side_effect=_blocked):
             with self.assertRaises(ValueError):
                 network.public_addresses("169.254.169.254", 80)
-            self.assertEqual(network.public_addresses("93.184.216.34", 80), ["93.184.216.34"])
+            self.assertEqual(network.public_addresses("203.0.113.34", 80), ["203.0.113.34"])
 
     def test_split_url(self):
         self.assertEqual(network.split_url("https://bit.ly/abc?x=1"), ("https", "bit.ly", 443, "/abc?x=1"))
@@ -151,7 +180,7 @@ class OfflineDefaultTests(SocketGuard):
         headers, body = parser.parse_email(sample_raw())
         auth_result, _ = auth.check_authentication(headers)
         self.assertEqual(auth_result.spf_record, "")
-        iocs = [Indicator(type="url", value="https://bit.ly/abc"), Indicator(type="ip", value="93.184.216.34")]
+        iocs = [Indicator(type="url", value="https://bit.ly/abc"), Indicator(type="ip", value="203.0.113.34")]
         self.assertEqual(urlexpand.expand_urls(iocs), ([], []))
         self.assertEqual(reputation.check_urls(iocs), [])
 
@@ -402,9 +431,13 @@ class InputLimitTests(SocketGuard):
         result = pipeline.analyze_raw(email_with(text_body=big), "x")
         self.assertTrue(any("Full body analysis" == c.check for c in result.checks_not_run))
 
-    def test_header_values_are_capped(self):
-        headers, _ = parser.parse_email(email_with(text_body="hi", extra_headers="Reply-To: " + "a" * 10000 + "\n"))
-        self.assertLessEqual(len(headers.reply_to), parser.MAX_HEADER_CHARS)
+    def test_header_values_are_read_in_full_and_shown_cut(self):
+        from atarus_phishcheck.safe_output import display_copy
+        result = pipeline.analyze_raw(email_with(text_body="hi", extra_headers="Reply-To: " + "a" * 10000 + " <reply@evil.test>\n"), "x")
+        self.assertEqual(result.headers.reply_to_email, "reply@evil.test")
+        shown = display_copy(result).headers.reply_to
+        self.assertLess(len(shown), parser.MAX_HEADER_CHARS + 100)
+        self.assertIn("shown cut at", shown)
 
     def test_overlong_hostnames_are_skipped(self):
         raw = email_with(text_body="see http://" + "a" * 400 + ".example.test/x")
@@ -416,7 +449,7 @@ class InputLimitTests(SocketGuard):
         regex took 8.9 s at 24 KB; these are 300 to 500 KB each."""
         cases = [
             "<a href='x' " * 40000,
-            ("<a href='http://1.2.3.4/'>https://www.paypal.com</a>" + "<a href='x' ") * 8000,
+            ("<a href='http://198.51.100.4/'>https://www.paypal.com</a>" + "<a href='x' ") * 8000,
             "<" * 300000,
             'style="' * 60000,
             "<script>" * 60000,
@@ -438,7 +471,7 @@ class InputLimitTests(SocketGuard):
 
     def test_detections_still_work_on_normal_html(self):
         html = ('<p style="display:none">hidden filter bait</p>'
-                '<a href="http://185.234.219.45/login">https://www.paypal.com/signin</a>')
+                '<a href="http://203.0.113.45/login">https://www.paypal.com/signin</a>')
         self.assertTrue(content._hidden_text_in_html(html))
         self.assertTrue(content._mismatched_link_text(html))
         self.assertFalse(content._mismatched_link_text('<a href="https://www.paypal.com/x">https://paypal.com/x</a>'))

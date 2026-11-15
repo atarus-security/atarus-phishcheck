@@ -40,6 +40,14 @@ class AuthResult:
     alignment_dkim: bool = False
     records_looked_up: bool = False  # True only when the DNS lookups ran and answered
 
+    @property
+    def dkim_shown(self) -> str:
+        """The DKIM result as reports show it: a pass whose signing domain is
+        not the sender's is marked, since anyone can sign with their own domain."""
+        if self.dkim_result == "pass" and not self.alignment_dkim:
+            return "pass (not aligned with From)"
+        return self.dkim_result
+
 
 @dataclass
 class EmailHeaders:
@@ -50,17 +58,25 @@ class EmailHeaders:
     from_email: str = ""
     from_domain: str = ""
     reply_to: str = ""
+    reply_to_email: str = ""  # first address in Reply-To, parsed from the full raw value
     return_path: str = ""
     to: str = ""
     subject: str = ""
     date: str = ""
     message_id: str = ""
-    received_chain: list = field(default_factory=list)
+    received_chain: list = field(default_factory=list)  # the first 100 Received headers, top first
+    received_count: int = 0  # how many Received headers the message has
     x_mailer: str = ""
     x_originating_ip: str = ""
     authentication_results: str = ""
     dkim_signature: str = ""
     received_spf: str = ""
+    from_addresses: list = field(default_factory=list)  # every mailbox in the first From header
+    from_header_count: int = 0  # how many From headers the message has
+    header_count: int = 0  # headers the parser found at the top of the message
+    from_more_mailboxes: bool = False  # the From header holds more mailboxes than were kept
+    sender_candidates: list = field(default_factory=list)  # every domain a reader could take as the sender's
+    malformed: list = field(default_factory=list)  # {header, reason, evidence, severity} for headers read leniently
 
 
 @dataclass
@@ -71,6 +87,13 @@ class EmailBody:
     urls: list = field(default_factory=list)
     attachments: list = field(default_factory=list)
     truncated: list = field(default_factory=list)  # notes about parts cut at the size cap
+    extra_html: list = field(default_factory=list)  # further HTML parts and HTML attachments, for the content checks
+    extra_text: str = ""  # further text parts and text attachments, for the content checks
+    part_problems: list = field(default_factory=list)  # malformed part headers other than file names
+    urls_capped: bool = False  # more than MAX_URLS distinct links
+    limited: str = ""  # why part of the message was not analysed, or ''
+    read_digests: set = field(default_factory=set)  # digests of every text and HTML part read, so the raw scan does not repeat them
+    raw_scan_text: list = field(default_factory=list)  # text and HTML found only by the raw scan of a message past the limits, for the brand check
 
 
 @dataclass
@@ -95,6 +118,7 @@ class AnalysisResult:
     mode: str = "offline"  # offline or online
     lookups_enabled: list = field(default_factory=list)
     checks_not_run: list = field(default_factory=list)  # list of CheckNotRun
+    analysis_limited: str = ""  # why part of the message was not analysed, or ''
 
     def add_finding(self, finding: Finding):
         self.findings.append(finding)

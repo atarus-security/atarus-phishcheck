@@ -124,7 +124,10 @@ def iter_anchors(html: str):
     """Yield (href_or_None, inner_html) for each ``<a ...>...</a>``.
 
     Positions of every ``</a`` are collected once so that anchors without a
-    matching close tag cannot make the scan quadratic.
+    matching close tag cannot make the scan quadratic. An anchor's inner
+    HTML also ends where the next ``<a`` starts (anchors do not nest in
+    HTML), so 20,000 unclosed anchors before one ``</a>`` are read once,
+    not 20,000 times.
     """
     lower = html.lower()
     closes = []
@@ -137,11 +140,12 @@ def iter_anchors(html: str):
         pos = c + 3
     if not closes:
         return
-    for name, attrs, start, end in iter_tags(html):
-        if name != "a":
-            continue
+    anchors = [(attrs, start, end) for name, attrs, start, end in iter_tags(html) if name == "a"]
+    for i, (attrs, start, end) in enumerate(anchors):
         idx = bisect.bisect_right(closes, end)
         if idx >= len(closes):
             return
         close = closes[idx]
+        if i + 1 < len(anchors) and anchors[i + 1][1] < close:
+            close = anchors[i + 1][1]
         yield attr_value(attrs, "href"), html[end + 1:close]

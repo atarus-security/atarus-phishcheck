@@ -2,6 +2,7 @@
 import os
 import glob
 import html as _html
+from urllib.parse import quote
 import shutil
 import tempfile
 from rich.console import Console
@@ -9,12 +10,12 @@ from rich.markup import escape
 from rich.table import Table
 from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn
 from atarus_phishcheck.analyzers import scoring
-from atarus_phishcheck.analyzers.parser import InputTooLarge, MAX_INPUT_BYTES
+from atarus_phishcheck.analyzers.parser import InputRejected, MAX_INPUT_BYTES
 from atarus_phishcheck.models import AnalysisResult
 from atarus_phishcheck.network import Policy, OFFLINE
 from atarus_phishcheck.pipeline import analyze_file
 from atarus_phishcheck.reports import html_report, json_export
-from atarus_phishcheck.safe_output import safe_text
+from atarus_phishcheck.safe_output import safe_text, shown, visible_text
 
 console = Console()
 
@@ -33,8 +34,11 @@ def analyze_single(path: str, policy: Policy = None) -> AnalysisResult:
     return analyze_file(path, policy=policy or OFFLINE)
 
 
-def analyze_batch(input_path: str, output_dir: str, out_format: str, policy: Policy = None) -> list:
-    """Analyze a directory of .eml files or an mbox. Returns list of results."""
+def analyze_batch(input_path: str, output_dir: str, out_format: str, policy: Policy = None, skipped_out: list = None) -> list:
+    """Analyze a directory of .eml files or an mbox. Returns list of results.
+
+    ``skipped_out``, if given, receives (path, reason) for each file that
+    could not be analyzed, so the caller can set the exit code."""
     policy = policy or OFFLINE
     os.makedirs(output_dir, exist_ok=True)
     split_dir = None
@@ -48,7 +52,7 @@ def analyze_batch(input_path: str, output_dir: str, out_format: str, policy: Pol
         console.print(f"[bold white]Found {len(files)} email(s) to analyze[/]")
 
         results = []
-        skipped = []
+        skipped = skipped_out if skipped_out is not None else []
 
         with Progress(
             SpinnerColumn(),
@@ -69,7 +73,7 @@ def analyze_batch(input_path: str, output_dir: str, out_format: str, policy: Pol
                         html_report.generate(r, os.path.join(output_dir, f"phishcheck-{base}.html"))
                     if out_format in ("json", "all"):
                         json_export.generate(r, os.path.join(output_dir, f"phishcheck-{base}.json"))
-                except InputTooLarge as e:
+                except InputRejected as e:
                     skipped.append((f, str(e)))
                     console.print(f"[bold yellow]Skipped {escape(safe_text(f, 120))}:[/] {escape(safe_text(str(e)))}")
                 except Exception as e:
@@ -107,19 +111,27 @@ def _split_mbox(mbox_path: str, output_dir: str) -> tuple:
     out_dir = tempfile.mkdtemp(prefix="mbox-split-", dir=output_dir)
 
     paths = []
+    mbox = None
     try:
-        mbox = mailbox.mbox(mbox_path)
-        for i, msg in enumerate(mbox):
+        mbox = mailbox.mbox(mbox_path, factory=None, create=False)
+        # get_bytes returns each message as stored. Iterating the mailbox
+        # would parse every message in full with no limit on parts or
+        # nesting, and writing it back out would change the bytes the
+        # attachment hashes are taken from.
+        for i, key in enumerate(mbox.iterkeys()):
             if i >= MAX_MBOX_MESSAGES:
                 console.print(f"[bold yellow]mbox has more than {MAX_MBOX_MESSAGES} messages; the rest were not analyzed[/]")
                 break
             out_path = os.path.join(out_dir, f"message-{i:04d}.eml")
-            data = msg.as_bytes()
+            data = mbox.get_bytes(key)
             with open(out_path, "wb") as f:
                 f.write(data[:MAX_INPUT_BYTES + 1])
             paths.append(out_path)
     except Exception as e:
         console.print(f"[bold red]Error splitting mbox:[/] {escape(safe_text(str(e)))}")
+    finally:
+        if mbox is not None:
+            mbox.close()
 
     return paths, out_dir
 
@@ -146,7 +158,7 @@ def _print_batch_summary(results: list, skipped: list, output_dir: str, policy: 
 
         table.add_row(
             f"{r.phish_score}",
-            f"[{verdict_color}]{scoring.verdict_label(r.verdict)}[/]",
+            f"[{verdict_color}]{scoring.verdict_label(r.verdict)}[/]" + (" (limited)" if r.analysis_limited else ""),
             from_display,
             subject,
             filename,
@@ -161,6 +173,9 @@ def _print_batch_summary(results: list, skipped: list, output_dir: str, policy: 
         verdict_counts[r.verdict] = verdict_counts.get(r.verdict, 0) + 1
 
     console.print(f"[bold white]Total analyzed:[/] {len(results)}")
+    limited = sum(1 for r in results if r.analysis_limited)
+    if limited:
+        console.print(f"  [bold red]analyzed with limits:[/] {limited} (part of the message was not read; see each report)")
     for v in ("likely_phishing", "suspicious", "questionable", "no_strong_indicators"):
         if v in verdict_counts:
             console.print(f"  [{VERDICT_COLORS[v]}]{scoring.verdict_label(v)}:[/] {verdict_counts[v]}")
@@ -178,21 +193,23 @@ def _write_batch_summary(results: list, skipped: list, output_dir: str, policy: 
 
     results_sorted = sorted(results, key=lambda r: r.phish_score, reverse=True)
 
-    rows_html = ""
+    rows = []
     for r in results_sorted:
         verdict_class = r.verdict
         score_class = "high" if r.phish_score >= 75 else "medium" if r.phish_score >= 40 else "low" if r.phish_score >= 15 else "none"
         filename = os.path.basename(r.source_file)
         base = os.path.splitext(filename)[0]
 
-        rows_html += f'''
+        limited = f'<br><span class="limited">analyzed with limits: {_esc(r.analysis_limited)}</span>' if r.analysis_limited else ""
+        rows.append(f'''
         <tr>
             <td class="score-cell {score_class}">{r.phish_score}</td>
-            <td><span class="verdict-pill {verdict_class}">{_esc(scoring.verdict_label(r.verdict))}</span></td>
+            <td><span class="verdict-pill {verdict_class}">{_esc(scoring.verdict_label(r.verdict))}</span>{limited}</td>
             <td>{_esc(r.headers.from_email or r.headers.from_header or '(empty)')}</td>
             <td>{_esc(r.headers.subject or '(empty)')}</td>
-            <td><a href="phishcheck-{_esc(base)}.html">{_esc(filename)}</a></td>
-        </tr>'''
+            <td><a href="phishcheck-{_href(base)}.html">{_esc(filename)}</a></td>
+        </tr>''')
+    rows_html = "".join(rows)
 
     skipped_html = ""
     if skipped:
@@ -227,6 +244,7 @@ tr:hover td {{ background: #0a0a0a; }}
 .verdict-pill.suspicious {{ background: #431407; color: #fdba74; }}
 .verdict-pill.questionable {{ background: #422006; color: #fcd34d; }}
 .verdict-pill.no_strong_indicators {{ background: #052e16; color: #86efac; }}
+.limited {{ font-size: 11px; color: #fca5a5; }}
 .skipped {{ font-size: 13px; color: #ccc; padding-left: 20px; }}
 .skipped code {{ color: #fcd34d; }}
 a {{ color: #D4263E; text-decoration: none; }}
@@ -253,5 +271,16 @@ a:hover {{ text-decoration: underline; }}
         f.write(html)
 
 
+def _href(name: str) -> str:
+    """A report file name as a link: percent-encoded as the file system
+    stores it, so no character of it is shown or interpreted."""
+    try:
+        return quote(name, errors="surrogateescape")
+    except UnicodeEncodeError:
+        return quote(name, errors="replace")
+
+
 def _esc(s: str) -> str:
-    return _html.escape(s or "", quote=True)
+    """The one sanitizer for HTML text: cut for display, control and bidi
+    characters made visible, then escaped."""
+    return _html.escape(visible_text(shown(s or "")), quote=True)

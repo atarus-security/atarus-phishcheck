@@ -3,9 +3,11 @@ import json
 from atarus_phishcheck import __version__
 from atarus_phishcheck.analyzers import scoring
 from atarus_phishcheck.models import AnalysisResult
+from atarus_phishcheck.safe_output import display_copy
 
 
 def generate(result: AnalysisResult, output_path: str) -> str:
+    result = display_copy(result)  # long values from the email are cut, and marked
     data = {
         "tool": "atarus-phishcheck",
         "version": __version__,
@@ -16,6 +18,7 @@ def generate(result: AnalysisResult, output_path: str) -> str:
         "verdict": result.verdict,
         "verdict_text": scoring.VERDICT_TEXT.get(result.verdict, ""),
         "phish_score": result.phish_score,
+        "analysis_limited": result.analysis_limited or None,
         "headers": {
             "from": result.headers.from_header,
             "from_email": result.headers.from_email,
@@ -28,13 +31,14 @@ def generate(result: AnalysisResult, output_path: str) -> str:
             "message_id": result.headers.message_id,
             "x_mailer": result.headers.x_mailer,
             "x_originating_ip": result.headers.x_originating_ip,
-            "received_count": len(result.headers.received_chain),
+            "received_count": result.headers.received_count or len(result.headers.received_chain),
         },
         "authentication": {
             "source": "Authentication-Results header as written by the receiving server; DKIM is not verified by this tool",
             "spf_result": result.auth.spf_result,
             "spf_record": result.auth.spf_record,
             "dkim_result": result.auth.dkim_result,
+            "dkim_aligned_with_from": result.auth.alignment_dkim,
             "dmarc_result": result.auth.dmarc_result,
             "dmarc_record": result.auth.dmarc_record,
             "dmarc_policy": result.auth.dmarc_policy,

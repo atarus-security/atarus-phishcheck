@@ -1,6 +1,7 @@
 """Detect homoglyph and IDN lookalike attacks in domains"""
 import re
 from atarus_phishcheck.models import Finding, EmailHeaders, EmailBody
+from atarus_phishcheck.analyzers.parser import url_hostname, canonical_domain
 
 
 ASCII_LOOKALIKES = {
@@ -26,23 +27,40 @@ def check_homoglyphs(headers: EmailHeaders, body: EmailBody) -> list:
     """Detect homoglyph/IDN lookalike attacks. Returns list of findings."""
     findings = []
 
-    domains_to_check = set()
+    # One entry per domain in canonical IDNA form, so a domain written once
+    # in Unicode and once as xn-- is one domain, not two.
+    by_canonical = {}
 
-    if headers.from_domain and len(headers.from_domain) <= 253:
-        domains_to_check.add(headers.from_domain.lower())
+    for sender in [headers.from_domain] + list(headers.sender_candidates)[:5]:
+        if sender and len(sender) <= 253:
+            by_canonical.setdefault(canonical_domain(sender), sender.lower())
 
     for url in body.urls:
-        from urllib.parse import urlparse
-        parsed = urlparse(url if url.startswith("http") else f"http://{url}")
-        host = (parsed.hostname or "").lower()
+        host = url_hostname(url)
         if host and len(host) <= 253:
-            domains_to_check.add(host)
+            by_canonical.setdefault(canonical_domain(host), host)
+    domains_to_check = list(by_canonical.values())
 
     seen = set()
     for domain in domains_to_check:
         if domain in seen:
             continue
         seen.add(domain)
+
+        if not domain.isascii():
+            try:
+                encoded = domain.encode("idna").decode("ascii")
+            except Exception:
+                encoded = "(not a valid IDNA name)"
+            findings.append(Finding(
+                category="indicators",
+                severity="high",
+                title=f"Non-ASCII (IDN) domain detected: {domain}",
+                description=f"The domain '{domain}' contains characters outside ASCII. Letters from other scripts can look identical to Latin ones (Cyrillic 'а' for Latin 'a'), which is the basis of homograph phishing. Its ASCII (Punycode) form is '{encoded}'.",
+                recommendation="Do not trust IDN domains in email without independent verification. Compare the Punycode form with the domain the sender normally uses.",
+                evidence=f"Domain: {domain}\nPunycode: {encoded}\nNon-ASCII characters: {', '.join(sorted({f'U+{ord(c):04X}' for c in domain if ord(c) > 127}))[:300]}",
+            ))
+            continue
 
         if _has_punycode(domain):
             try:
@@ -84,15 +102,19 @@ def check_homoglyphs(headers: EmailHeaders, body: EmailBody) -> list:
         except Exception:
             pass
 
-        base_label = domain.split(".")[0].lower()
+        # Every label but the top-level one: login.paypa1.com hides the
+        # lookalike in the second label, where the first-label check missed it.
+        labels = [l for l in domain.lower().split(".")[:-1] if l] or [domain.lower()]
 
         for brand in MAJOR_BRANDS:
             brand_clean = brand.replace(" ", "").replace("-", "").lower()
-
-            if brand_clean in base_label and brand_clean != base_label:
-                continue
-
-            matched_segment = _find_lookalike_segment(base_label, brand_clean)
+            matched_segment = ""
+            for label in labels:
+                if brand_clean in label and brand_clean != label:
+                    continue
+                matched_segment = _find_lookalike_segment(label, brand_clean)
+                if matched_segment:
+                    break
             if matched_segment:
                 findings.append(Finding(
                     category="indicators",

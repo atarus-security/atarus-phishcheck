@@ -96,6 +96,7 @@
       </div>
     </div>
     <div class="verdict-desc">{{ verdict_text }}</div>
+    {% if result.analysis_limited %}<div class="mode-line">Limited analysis: {{ result.analysis_limited }}.</div>{% endif %}
   </div>
 
 
@@ -130,7 +131,7 @@
       <tr><td>Message-ID</td><td>{{ result.headers.message_id or '(empty)' }}</td></tr>
       {% if result.headers.x_mailer %}<tr><td>X-Mailer</td><td>{{ result.headers.x_mailer }}</td></tr>{% endif %}
       {% if result.headers.x_originating_ip %}<tr><td>X-Originating-IP</td><td>{{ result.headers.x_originating_ip }}</td></tr>{% endif %}
-      <tr><td>Received hops</td><td>{{ result.headers.received_chain | length }}</td></tr>
+      <tr><td>Received hops</td><td>{{ result.headers.received_count or (result.headers.received_chain | length) }}</td></tr>
     </table>
   </div>
 
@@ -144,7 +145,7 @@
       </div>
       <div class="auth-cell">
         <div class="auth-name">DKIM</div>
-        <div class="auth-result {{ result.auth.dkim_result }}">{{ result.auth.dkim_result.upper() }}</div>
+        <div class="auth-result {{ result.auth.dkim_result }}">{{ result.auth.dkim_shown.upper() }}</div>
       </div>
       <div class="auth-cell">
         <div class="auth-name">DMARC</div>
@@ -160,7 +161,7 @@
     {% endif %}
   </div>
 
-  {% for category, label in [('authentication', 'Authentication Findings'), ('indicators', 'Indicator Findings'), ('content', 'Content Findings')] %}
+  {% for category, label in [('authentication', 'Authentication Findings'), ('indicators', 'Indicator Findings'), ('content', 'Content Findings'), ('technical', 'Technical Findings')] %}
   {% if findings_by_category[category] %}
   <div class="section">
     <div class="section-title">{{ label }}</div>

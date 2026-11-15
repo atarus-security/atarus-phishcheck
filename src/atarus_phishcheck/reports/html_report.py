@@ -4,6 +4,7 @@ from atarus_phishcheck import __version__
 from atarus_phishcheck.analyzers import scoring
 from atarus_phishcheck.models import AnalysisResult
 from atarus_phishcheck.analyzers.sanitize import sanitize_html_for_preview, has_renderable_html
+from atarus_phishcheck.safe_output import visible_copy, visible_text
 
 
 def generate(result: AnalysisResult, output_path: str) -> str:
@@ -28,6 +29,11 @@ def generate(result: AnalysisResult, output_path: str) -> str:
     )
 
     template = env.get_template("phishcheck_report.html")
+    full = result
+    # Long values from the email are shown cut and marked, and every string
+    # passes through one sanitizer that makes control and bidi characters
+    # visible: the report must never display a name the way it is disguised.
+    result = visible_copy(result)
 
     findings_by_category = {"authentication": [], "indicators": [], "content": [], "technical": []}
     for f in result.findings:
@@ -44,15 +50,15 @@ def generate(result: AnalysisResult, output_path: str) -> str:
     # preview show HTML source instead of a page.
     preview_html = ""
     preview_available = False
-    if result.body and has_renderable_html(result.body.html):
-        preview_html = sanitize_html_for_preview(result.body.html)
+    if full.body and has_renderable_html(full.body.html):
+        preview_html = visible_text(sanitize_html_for_preview(full.body.html))
         preview_available = True
 
     html_content = template.render(
         result=result,
         version=__version__,
-        verdict_label=scoring.verdict_label(result.verdict),
-        verdict_text=scoring.VERDICT_TEXT.get(result.verdict, ""),
+        verdict_label=visible_text(scoring.verdict_label(result.verdict)),
+        verdict_text=visible_text(scoring.VERDICT_TEXT.get(result.verdict, "")),
         findings_by_category=findings_by_category,
         indicators_by_type=indicators_by_type,
         preview_html=preview_html,

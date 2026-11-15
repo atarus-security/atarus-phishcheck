@@ -75,12 +75,51 @@ def is_public_address(text: str) -> bool:
     return addr.is_global
 
 
-def looks_like_ip(text: str) -> bool:
+def host_as_ip(text: str):
+    """The address a browser would read from a URL host, as a string, or None.
+
+    Accepts IPv4 and IPv6 literals (brackets optional) and the legacy IPv4
+    forms that browsers and inet_aton still accept: one to four parts, each
+    decimal, 0x hexadecimal or 0-prefixed octal, the last part filling the
+    remaining bytes (3232235777, 0x7f000001, 0177.0.0.1, 127.1).
+    """
+    host = (text or "").strip("[]").rstrip(".")
+    if not host:
+        return None
     try:
-        ipaddress.ip_address(text.strip("[]"))
-        return True
+        return str(ipaddress.ip_address(host))
     except ValueError:
-        return False
+        pass
+    parts = host.split(".")
+    if not 1 <= len(parts) <= 4:
+        return None
+    values = []
+    for part in parts:
+        if not part or not part.isascii():
+            return None
+        try:
+            if part.lower().startswith("0x"):
+                values.append(int(part[2:] or "0", 16))
+            elif len(part) > 1 and part.startswith("0"):
+                values.append(int(part, 8))
+            elif part.isdigit():
+                values.append(int(part))
+            else:
+                return None
+        except ValueError:
+            return None
+    last = values.pop()
+    if any(v > 255 for v in values) or last >= 256 ** (4 - len(values)):
+        return None
+    number = 0
+    for v in values:
+        number = number * 256 + v
+    number = number * 256 ** (4 - len(values)) + last
+    return str(ipaddress.IPv4Address(number))
+
+
+def looks_like_ip(text: str) -> bool:
+    return host_as_ip(text) is not None
 
 
 def public_addresses(host: str, port: int = 80) -> list:
@@ -92,10 +131,11 @@ def public_addresses(host: str, port: int = 80) -> list:
     host = host.strip("[]")
     if not host:
         raise ValueError("empty host")
-    if looks_like_ip(host):
-        if not is_public_address(host):
+    literal = host_as_ip(host)
+    if literal is not None:
+        if not is_public_address(literal):
             raise ValueError(f"{host} is not a public address")
-        return [host]
+        return [literal]
     try:
         infos = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
     except (socket.gaierror, UnicodeError, OSError) as e:

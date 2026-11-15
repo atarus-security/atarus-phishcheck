@@ -2,6 +2,7 @@
 import re
 from atarus_phishcheck.models import EmailHeaders, EmailBody, Finding
 from atarus_phishcheck.analyzers.htmlscan import strip_tags, iter_tags, iter_anchors, attr_value
+from atarus_phishcheck.analyzers.parser import canonical_domain
 
 
 URGENCY_PATTERNS = [
@@ -45,7 +46,8 @@ def analyze_content(headers: EmailHeaders, body: EmailBody) -> list:
     """Analyze email content for phishing patterns. Returns list of Findings."""
     findings = []
 
-    text = (body.text + " " + _strip_html(body.html) + " " + headers.subject).lower()
+    htmls = [body.html] + list(body.extra_html) if body.html else list(body.extra_html)
+    text = " ".join([body.text, body.extra_text] + [_strip_html(h) for h in htmls] + [headers.subject]).lower()
 
     urgency_matches = _count_matches(text, URGENCY_PATTERNS)
     if urgency_matches >= 2:
@@ -98,8 +100,8 @@ def analyze_content(headers: EmailHeaders, body: EmailBody) -> list:
             ))
             break
 
-    if body.html:
-        if _hidden_text_in_html(body.html):
+    if htmls:
+        if any(_hidden_text_in_html(h) for h in htmls):
             findings.append(Finding(
                 category="content",
                 severity="high",
@@ -108,7 +110,7 @@ def analyze_content(headers: EmailHeaders, body: EmailBody) -> list:
                 recommendation="Examine the raw HTML before interacting. Hidden text combined with deceptive visible content is a strong malicious indicator.",
             ))
 
-        if _mismatched_link_text(body.html):
+        if any(_mismatched_link_text(h) for h in htmls):
             findings.append(Finding(
                 category="content",
                 severity="high",
@@ -171,7 +173,7 @@ def _mismatched_link_text(html: str) -> bool:
         text_domain = _extract_domain(text)
         href_domain = _extract_domain(href)
 
-        if text_domain and href_domain and text_domain != href_domain:
+        if text_domain and href_domain and canonical_domain(text_domain) != canonical_domain(href_domain):
             return True
     return False
 

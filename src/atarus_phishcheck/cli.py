@@ -5,7 +5,7 @@ from rich.console import Console
 from rich.markup import escape
 from atarus_phishcheck import __version__
 from atarus_phishcheck.analyzers import scoring
-from atarus_phishcheck.analyzers.parser import InputTooLarge
+from atarus_phishcheck.analyzers.parser import InputRejected
 from atarus_phishcheck.batch import analyze_batch
 from atarus_phishcheck.network import Policy
 from atarus_phishcheck.pipeline import analyze_file
@@ -39,7 +39,7 @@ VERDICT_COLORS = {
 @click.option("--expand-links", is_flag=True, help="With --online: send one HEAD request to each URL shortener in the email and record where it redirects. The destination is never contacted.")
 @click.option("--offline", is_flag=True, hidden=True, help="Accepted for compatibility; offline is the default.")
 @click.option("--batch", is_flag=True, help="Batch mode: analyze a directory of .eml files or an .mbox file")
-@click.option("-v", "--verbose", is_flag=True, help="Verbose output")
+@click.option("-v", "--verbose", is_flag=True, hidden=True, help="Accepted for compatibility; has no effect.")
 @click.version_option(version=VERSION, prog_name="atarus-phishcheck")
 def main(input_path, output, out_format, online, expand_links, offline, batch, verbose):
     """atarus-phishcheck: defensive email analysis. Offline by default; nothing leaves your machine unless you pass --online."""
@@ -63,17 +63,27 @@ def main(input_path, output, out_format, online, expand_links, offline, batch, v
         console.print("[bold green]Offline mode (default):[/] no network lookups. Pass --online to enable them.")
         console.print()
 
-    if batch or os.path.isdir(input_path) or input_path.lower().endswith(".mbox"):
+    is_batch = batch or os.path.isdir(input_path) or input_path.lower().endswith(".mbox")
+
+    if is_batch or out_format != "terminal":
+        _check_output_dir(output)
+
+    if is_batch:
         console.print(f"[bold white]Batch mode:[/] {escape(input_path)}")
-        analyze_batch(input_path, output, out_format, policy=policy)
+        skipped = []
+        results = analyze_batch(input_path, output, out_format, policy=policy, skipped_out=skipped)
+        if not results and not skipped:
+            sys.exit(2)  # nothing to analyze: the run did not happen
+        if skipped:
+            sys.exit(1)  # some files were not analyzed; they are listed in batch-summary.html
         return
 
     console.print(f"[bold white]Analyzing:[/] {escape(input_path)}")
 
     try:
         result = analyze_file(input_path, policy=policy)
-    except InputTooLarge as e:
-        console.print(f"[bold red]Refused:[/] {escape(str(e))}")
+    except InputRejected as e:
+        console.print(f"[bold red]Refused:[/] {_show(str(e))}")
         sys.exit(2)
 
     _print_summary(result)
@@ -81,7 +91,6 @@ def main(input_path, output, out_format, online, expand_links, offline, batch, v
     if out_format == "terminal":
         return
 
-    os.makedirs(output, exist_ok=True)
     base = os.path.splitext(os.path.basename(input_path))[0]
 
     if out_format in ("html", "all"):
@@ -93,6 +102,18 @@ def main(input_path, output, out_format, online, expand_links, offline, batch, v
         json_path = os.path.join(output, f"phishcheck-{base}.json")
         json_export.generate(result, json_path)
         console.print(f"[bold green]JSON report:[/] {escape(json_path)}")
+
+
+def _check_output_dir(output: str) -> None:
+    """Exit with a plain message, not a traceback, when reports cannot be written."""
+    try:
+        os.makedirs(output, exist_ok=True)
+    except OSError as e:
+        console.print(f"[bold red]Error:[/] cannot write reports to {_show(output)}: {_show(e.strerror or e)}")
+        sys.exit(2)
+    if not os.access(output, os.W_OK | os.X_OK):
+        console.print(f"[bold red]Error:[/] cannot write reports to {_show(output)}: permission denied")
+        sys.exit(2)
 
 
 def _show(value) -> str:
@@ -108,11 +129,13 @@ def _print_summary(result):
     console.print(f"[bold white]Subject:[/] {_show(result.headers.subject)}")
     console.print()
 
-    console.print(f"[bold white]Authentication (from headers):[/] SPF={_show(result.auth.spf_result)}, DKIM={_show(result.auth.dkim_result)}, DMARC={_show(result.auth.dmarc_result)}")
+    console.print(f"[bold white]Authentication (from headers):[/] SPF={_show(result.auth.spf_result)}, DKIM={_show(result.auth.dkim_shown)}, DMARC={_show(result.auth.dmarc_result)}")
     console.print(f"[bold white]Indicators:[/] {len(result.indicators)}")
     console.print(f"[bold white]Findings:[/] {len(result.findings)} ({result.severity_counts['high']} high, {result.severity_counts['medium']} medium, {result.severity_counts['low']} low)")
     console.print()
 
+    if result.analysis_limited:
+        console.print(f"[bold red]Limited analysis:[/] {_show(result.analysis_limited)}")
     console.print(f"[bold white]Phish score:[/] {result.phish_score}/100")
     console.print(f"[bold {color}]Verdict: {scoring.verdict_label(result.verdict)}[/]")
     console.print(f"[dim]{escape(scoring.VERDICT_TEXT.get(result.verdict, ''))}[/]")

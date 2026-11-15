@@ -1,6 +1,7 @@
 """Detect brand impersonation in email sender and content"""
 from atarus_phishcheck.models import EmailHeaders, EmailBody, Finding
 from atarus_phishcheck.analyzers.htmlscan import strip_tags
+from atarus_phishcheck.analyzers.parser import canonical_domain
 
 
 BRAND_LIBRARY = {
@@ -111,17 +112,21 @@ def check_brand_impersonation(headers: EmailHeaders, body: EmailBody) -> list:
     """Detect when email claims to be from a known brand but sender domain doesn't match"""
     findings = []
 
-    if not headers.from_domain:
-        return findings
-
     search_text = " ".join([
         headers.from_name or "",
         headers.subject or "",
         (body.text or "")[:2000],
         _strip_html(body.html or "")[:2000],
-    ]).lower()
+    ] + [_strip_html(t)[:2000] for t in body.raw_scan_text[:20]]).lower()
 
-    sender_domain = headers.from_domain.lower()
+    # Every domain a reader could take as the sender's: the From address,
+    # an address written in front of it, further mailboxes, and, when no
+    # address could be read, the domain the receiving server recorded. A
+    # brand claim is checked against each of them.
+    candidates = [d.lower() for d in (headers.sender_candidates or ([headers.from_domain] if headers.from_domain else [])) if d][:5]
+    canonical = [canonical_domain(d) for d in candidates]
+    if not candidates and not headers.header_count:
+        return findings  # body text with no headers: there is no sender to compare
 
     for brand_name, brand_info in BRAND_LIBRARY.items():
         legit_domains = brand_info["legitimate_domains"]
@@ -138,14 +143,10 @@ def check_brand_impersonation(headers: EmailHeaders, body: EmailBody) -> list:
         if not brand_mentioned:
             continue
 
-        sender_legitimate = False
-        for legit in legit_domains:
-            if sender_domain == legit or sender_domain.endswith("." + legit):
-                sender_legitimate = True
-                break
-
-        if sender_legitimate:
+        sender_domain = next((d for d, c in zip(candidates, canonical) if not any(c == legit or c.endswith("." + legit) for legit in legit_domains)), None)
+        if candidates and sender_domain is None:
             continue
+        sender_domain = sender_domain or "(no sender address could be read)"
 
         severity = "high"
         brand_display = brand_name.upper() if len(brand_name) <= 4 else brand_name.title()

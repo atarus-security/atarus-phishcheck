@@ -15,7 +15,7 @@ import ssl
 from urllib.parse import urljoin
 from atarus_phishcheck import __version__
 from atarus_phishcheck.models import Indicator, Finding
-from atarus_phishcheck.network import Policy, OFFLINE, public_addresses, split_url, looks_like_ip, is_public_address
+from atarus_phishcheck.network import Policy, OFFLINE, public_addresses, split_url, looks_like_ip, is_public_address, host_as_ip
 
 NETWORK = [
     {
@@ -99,7 +99,10 @@ def expand_urls(indicators: list, policy: Policy = None, notes: list = None) -> 
 
         default_port = 443 if scheme == "https" else 80
         base = f"{scheme}://{host}{path}" if port == default_port else f"{scheme}://{host}:{port}{path}"
-        destination = urljoin(base, location.strip())[:2048]
+        try:
+            destination = urljoin(base, location.strip())[:2048]
+        except ValueError:
+            destination = location.strip()[:2048]
         try:
             _, dest_host, _, _ = split_url(destination)
         except ValueError:
@@ -109,7 +112,8 @@ def expand_urls(indicators: list, policy: Policy = None, notes: list = None) -> 
         if dest_host:
             new_indicators.append(Indicator(type="domain", value=dest_host, context=f"Redirect target of {base_domain} (not contacted)"))
 
-        if dest_host and looks_like_ip(dest_host) and not is_public_address(dest_host):
+        dest_ip = host_as_ip(dest_host) if dest_host else None
+        if dest_ip is not None and not is_public_address(dest_ip):
             findings.append(Finding(
                 category="indicators",
                 severity="high",

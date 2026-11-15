@@ -4,7 +4,6 @@ A lookup that fails is recorded as a check not run. A URL that URLhaus has
 no record of is marked ``not_listed``, never ``clean``: absence from one feed
 is not evidence of anything.
 """
-import hashlib
 import requests
 from atarus_phishcheck import __version__
 from atarus_phishcheck.models import Indicator, Finding, EmailBody
@@ -91,49 +90,22 @@ def check_urls(indicators: list, policy: Policy = None, notes: list = None) -> l
     return findings
 
 
-def hash_attachments(body: EmailBody, raw_email: str) -> tuple:
-    """Compute hashes for attachments. Returns (indicators, findings)."""
-    import email
-    import email.policy
-    from email import message_from_string
+def hash_attachments(body: EmailBody, raw_email: str = "") -> tuple:
+    """Hash indicators for the attachments the parser found. Returns (indicators, findings).
 
+    The parser hashes each attachment while it walks the message, so this
+    uses the same list of attachments as every other check and does not
+    parse the email a second time. ``raw_email`` is accepted for callers of
+    the old signature and is not used.
+    """
     indicators = []
-    findings = []
-
-    if not body.attachments:
-        return indicators, findings
-
-    try:
-        msg = message_from_string(raw_email, policy=email.policy.default)
-    except Exception:
-        return indicators, findings
-
-    if not msg.is_multipart():
-        return indicators, findings
-
-    for part in msg.walk():
-        cdisp = str(part.get("Content-Disposition", ""))
-        if "attachment" not in cdisp.lower():
+    for att in body.attachments:
+        filename = att.get("filename", "") or "(unnamed attachment)"
+        if not att.get("sha256"):
             continue
-
-        filename = part.get_filename()
-        if not filename:
-            continue
-
-        try:
-            payload = part.get_payload(decode=True)
-            if not payload:
-                continue
-        except Exception:
-            continue
-
-        md5 = hashlib.md5(payload).hexdigest()
-        sha256 = hashlib.sha256(payload).hexdigest()
-
-        indicators.append(Indicator(type="hash", value=sha256, context=f"SHA-256 of {filename}"))
-        indicators.append(Indicator(type="hash", value=md5, context=f"MD5 of {filename}"))
-
-    return indicators, findings
+        indicators.append(Indicator(type="hash", value=att["sha256"], context=f"SHA-256 of {filename}"))
+        indicators.append(Indicator(type="hash", value=att["md5"], context=f"MD5 of {filename}"))
+    return indicators, []
 
 
 def check_hashes_malwarebazaar(indicators: list, policy: Policy = None, notes: list = None) -> list:

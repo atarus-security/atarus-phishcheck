@@ -9,6 +9,8 @@ SEVERITY_WEIGHTS = {
     "info": 0,
 }
 
+LIMITED_FLOOR = 75  # the lowest score of a message whose structure passed the analysis limits ("likely_phishing"): such a structure has no ordinary use
+
 VERDICTS = ("no_strong_indicators", "questionable", "suspicious", "likely_phishing")
 
 # The lowest band is a statement about what the checks that ran found, not
@@ -63,6 +65,8 @@ def score_result(result: AnalysisResult) -> None:
     if content_mediums >= 2 and (auth_fails or indicator_highs):
         score += 10
 
+    if result.analysis_limited:
+        score = max(score, LIMITED_FLOOR)  # a structure past the limits is a known evasion with no ordinary use
     score = min(score, 100)
     result.phish_score = score
 
